@@ -13,6 +13,8 @@ from __future__ import annotations
 import json
 import os
 import re
+import shutil
+import subprocess
 import urllib.error
 import urllib.request
 
@@ -75,3 +77,89 @@ def _nwc_test_address(alias: str) -> dict:
     if payload.get("tag") != "payRequest":
         return {"ok": False, "error": "public_endpoint_unreachable", "message": "Discovery endpoint returned an invalid LNURL response."}
     return {"ok": True}
+
+
+# ── Bech32 encoding (BIP-173) — used for LNURL strings (LUD-01) ──
+
+_BECH32_CHARSET = "qpzry9x8gf2tvdw0s3jn54khce6mua7l"
+_BECH32_GENERATOR = (0x3B6A57B2, 0x26508E6D, 0x1EA119FA, 0x3D4233DD, 0x2A1462B3)
+
+
+def _bech32_polymod(values: list[int]) -> int:
+    chk = 1
+    for value in values:
+        top = chk >> 25
+        chk = ((chk & 0x1FFFFFF) << 5) ^ value
+        for i in range(5):
+            if (top >> i) & 1:
+                chk ^= _BECH32_GENERATOR[i]
+    return chk
+
+
+def _bech32_hrp_expand(hrp: str) -> list[int]:
+    return [ord(c) >> 5 for c in hrp] + [0] + [ord(c) & 31 for c in hrp]
+
+
+def _bech32_create_checksum(hrp: str, data: list[int]) -> list[int]:
+    values = _bech32_hrp_expand(hrp) + data
+    polymod = _bech32_polymod(values + [0, 0, 0, 0, 0, 0]) ^ 1
+    return [(polymod >> (5 * (5 - i))) & 31 for i in range(6)]
+
+
+def _bech32_convertbits(data: bytes, frombits: int, tobits: int) -> list[int]:
+    acc = 0
+    bits = 0
+    ret: list[int] = []
+    maxv = (1 << tobits) - 1
+    for value in data:
+        acc = (acc << frombits) | value
+        bits += frombits
+        while bits >= tobits:
+            bits -= tobits
+            ret.append((acc >> bits) & maxv)
+    if bits:
+        ret.append((acc << (tobits - bits)) & maxv)
+    return ret
+
+
+def _bech32_encode(hrp: str, payload: bytes) -> str:
+    """Encode payload bytes as a bech32 string with the given HRP (BIP-173)."""
+    data = _bech32_convertbits(payload, 8, 5)
+    combined = data + _bech32_create_checksum(hrp, data)
+    return hrp + "1" + "".join(_BECH32_CHARSET[d] for d in combined)
+
+
+def _nwc_lnurl_bech32(alias: str, domain: str) -> str:
+    """Return the LUD-01 bech32 LNURL for a wallet connection alias."""
+    url = f"https://{domain}/.well-known/lnurlp/{alias}"
+    return _bech32_encode("lnurl", url.encode("utf-8"))
+
+
+def _nwc_lightning_address(alias: str, domain: str | None) -> str | None:
+    """Return the Lightning Address for an alias, or None if domain is unavailable."""
+    if not domain:
+        return None
+    return f"{alias}@{domain}"
+
+
+def _render_qr_terminal(data: str) -> str | None:
+    """Render a QR code as ANSI text for terminal display.
+
+    Uses ``qrencode -t ANSIUTF8`` if available on PATH.  Returns None if
+    qrencode is not installed.
+    """
+    qrencode = shutil.which("qrencode")
+    if qrencode is None:
+        return None
+    try:
+        result = subprocess.run(
+            [qrencode, "-t", "ANSIUTF8", "-l", "H", data],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        if result.returncode == 0 and result.stdout:
+            return result.stdout
+    except Exception:
+        pass
+    return None

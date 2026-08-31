@@ -136,8 +136,25 @@ Disable a piece of the base stack:
 - `bitcoin-cli`, `lncli` — as the operator user
 - `nodeinfo` — service/onion status report
 - `lndconnect` — QR / URI for Zeus & other LND connect apps
-- `nwc-wallet create|list|drain|delete` — manage NWC wallets from the CLI
+- `nwc-wallet` — manage NWC wallets from the CLI
   (talks to Alby Hub; exported with the right env when `nwc` is enabled)
+
+  | Subcommand | What it does |
+  |---|---|
+  | `nwc-wallet create <name> <alias> [--qr]` | Create a wallet, print the Lightning Address and pairing URI (shown once). Pass `--qr` to also render a QR code in the terminal. |
+  | `nwc-wallet list` | List all managed wallets (includes Lightning Address). |
+  | `nwc-wallet lnurl <alias> [--qr]` | Show the Lightning Address, bech32 LNURL, and optionally a terminal QR code for receiving payments. |
+  | `nwc-wallet lnurl <alias> --address-only` | Print only the Lightning Address (e.g. for piping). |
+  | `nwc-wallet lnurl <alias> --lnurl-only` | Print only the bech32 LNURL string. |
+  | `nwc-wallet drain <wallet>` | Drain funds from a wallet. |
+  | `nwc-wallet delete <wallet>` | Delete a wallet. |
+  | `nwc-wallet rotate <wallet>` | Generate a new NWC connection secret (old one is revoked). |
+  | `nwc-wallet address show <alias>` | Test if a Lightning Address endpoint is publicly reachable. |
+  | `nwc-wallet health` | Check Alby Hub health. |
+
+  The `--qr` flag on `create` and `lnurl` renders a scannable QR code directly
+  in the terminal (requires `qrencode`, which is included when `lnurl` is
+  enabled via the NixOS module).
 
 ## Flake outputs
 

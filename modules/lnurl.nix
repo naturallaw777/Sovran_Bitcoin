@@ -130,5 +130,9 @@ in {
         ] ++ optional (lnurlCfg.domainFile != null) (toString lnurlCfg.domainFile);
       };
     };
+
+    # qrencode is needed for `nwc-wallet lnurl --qr` and `nwc-wallet create --qr`
+    # to render terminal QR codes for Lightning Addresses.
+    environment.systemPackages = [ pkgs.qrencode ];
   };
 }
