@@ -87,6 +87,20 @@ let
     exec ${lib.getExe cfg.package}
   '';
 
+  # ── LNURL domain env for the CLI wrapper ────────────────────────
+  # When the LNURL service is enabled, bake the Lightning Address domain
+  # into the nwc-wallet wrapper so the CLI can construct addresses and
+  # QR codes without requiring the caller to set env vars manually.
+  lnurlCfg = config.services.sovran-lnurl or {};
+  lnurlEnabled = (lnurlCfg.enable or false);
+  lnurlDomainExport =
+    if lnurlEnabled && (lnurlCfg.domain or null) != null then
+      "export NWC_LNURL_DOMAIN='${lnurlCfg.domain}'"
+    else if lnurlEnabled && (lnurlCfg.domainFile or null) != null then
+      "export NWC_LNURL_DOMAIN_FILE='${toString lnurlCfg.domainFile}'"
+    else
+      "# LNURL domain not configured at build time";
+
   # CLI wallet manager with the right env baked in.
   # Note: needs root/operator rights to read the unlock password and macaroon.
   wrappedNwcWallet = lib.hiPrio (pkgs.writeShellScriptBin "nwc-wallet" ''
@@ -96,6 +110,7 @@ let
     export NWC_LND_MACAROON_FILE='/run/lnd/albyhub.macaroon'
     export NWC_UNLOCK_PASSWORD_FILE='${cfg.dataDir}/unlock-password'
     export NWC_RELAY='${cfg.relay}'
+    ${lnurlDomainExport}
     exec ${pkgs.sovran-bitcoin.nwc}/bin/nwc-wallet "$@"
   '');
 in {
