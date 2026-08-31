@@ -239,7 +239,7 @@ in {
     services.electrs.enable = true;
     services.mysql = {
       enable = true;
-      package = pkgs.mariadb;
+      package = lib.mkDefault pkgs.mariadb;
       ensureDatabases = [ cfg.database.name ];
       ensureUsers = [
         {
