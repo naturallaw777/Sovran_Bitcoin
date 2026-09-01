@@ -1,4 +1,4 @@
-# Self-hosted LNURL-pay service (Lightning Addresses) backed by Alby Hub.
+}# Self-hosted LNURL-pay service (Lightning Addresses) backed by Alby Hub.
 #
 # Decoupled from Sovran_SystemsOS' `modules/nwc-wallets.nix`. The service is
 # pure-stdlib Python (`packages/sovran-nwc`) and runs as the albyhub user.
@@ -70,6 +70,12 @@ let
   albyhub = config.services.albyhub;
   lndCfg = config.services.lnd;
 
+  # Hardcoded in nwc_audit.py (AUDIT_LOG_PATH = "/var/log/sovran-nwc-audit.log").
+  # The service runs as the albyhub user, so the file must exist and be owned
+  # by that user before the first request, and must be re-mounted writable
+  # inside the sandbox (ProtectSystem = "strict" makes the whole FS read-only).
+  auditLogPath = "/var/log/sovran-nwc-audit.log";
+
   env = {
     NWC_LNURL_BIND_HOST = lnurlCfg.address;
     NWC_LNURL_PORT = toString lnurlCfg.port;
@@ -95,6 +101,15 @@ in {
           or `domainFile` — Lightning Addresses need a public domain.
         '';
       }
+    ];
+
+    # Create the audit log file up front, owned by the albyhub user, so
+    # nwc_audit.py can append to it. Without this the first audit write fails
+    # with "Errno 30: Read-only file system" and no audit trail is recorded.
+    # NixOS runs tmpfiles at activation time, so the file exists immediately
+    # after `nixos-rebuild switch` (no reboot needed).
+    systemd.tmpfiles.rules = [
+      "f ${auditLogPath} 0600 ${albyhub.user} ${albyhub.group} -"
     ];
 
     systemd.services.nwc-lnurl = {
@@ -128,6 +143,9 @@ in {
           "/run/lnd"
           "${albyhub.dataDir}/unlock-password"
         ] ++ optional (lnurlCfg.domainFile != null) (toString lnurlCfg.domainFile);
+        # Re-mount the audit log writable inside the sandbox; everything else
+        # stays read-only (ProtectSystem = "strict").
+        ReadWritePaths = [ auditLogPath ];
       };
     };
 
@@ -136,3 +154,4 @@ in {
     environment.systemPackages = [ pkgs.qrencode ];
   };
 }
+

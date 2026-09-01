@@ -743,7 +743,7 @@ class AlbyHubManager:
             body={
                 "amountMsat": amount_msat,
                 "description": description or LNURL_DESCRIPTION_DEFAULT,
-                "appId": app_id,
+                "toAppId": app_id,
             },
         )
         invoice: str = resp.get("invoice") or ""
