@@ -15,7 +15,7 @@
 #   LNURL        http://127.0.0.1:8181    (proxy /.well-known/lnurlp and /lnurlp)
 #
 # All of them also get Tor onion services (nix-bitcoin.onionServices.*).
-{ ... }:
+{ config, pkgs, lib, ... }:
 
 {
   sovran-bitcoin = {

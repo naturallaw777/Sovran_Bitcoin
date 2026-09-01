@@ -27,9 +27,7 @@ Vendored from [fort-nix/nix-bitcoin](https://github.com/fort-nix/nix-bitcoin)
 {
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
-
-    sovran-bitcoin.url = "git+https://git.sovransystems.com/Sovran_Systems/Sovran_Bitcoin";
-    # A GitHub mirror also works: "github:Sovran_Systems/Sovran_Bitcoin"
+    sovran-bitcoin.url = "github:naturallaw777/Sovran_Bitcoin";
   };
 
   outputs = { self, nixpkgs, sovran-bitcoin }: {

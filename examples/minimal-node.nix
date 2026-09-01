@@ -2,7 +2,7 @@
 #
 # bitcoind (txindex, Tor-proxied & enforced) + electrs + LND,
 # onion services, generated secrets, operator user, nodeinfo, lndconnect.
-{ ... }:
+{ config, pkgs, lib, ... }:
 
 {
   # Add to your flake inputs:
