@@ -1,4 +1,4 @@
-}# Self-hosted LNURL-pay service (Lightning Addresses) backed by Alby Hub.
+# Self-hosted LNURL-pay service (Lightning Addresses) backed by Alby Hub.
 #
 # Decoupled from Sovran_SystemsOS' `modules/nwc-wallets.nix`. The service is
 # pure-stdlib Python (`packages/sovran-nwc`) and runs as the albyhub user.
