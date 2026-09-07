@@ -69,6 +69,8 @@ let
 
   albyhub = config.services.albyhub;
   lndCfg = config.services.lnd;
+  # nix-bitcoin hardening helpers (capability / syscall / network sandboxing)
+  nbLib = config.nix-bitcoin.lib;
 
   # Hardcoded in nwc_audit.py (AUDIT_LOG_PATH = "/var/log/sovran-nwc-audit.log").
   # The service runs as the albyhub user, so the file must exist and be owned
@@ -126,13 +128,19 @@ in {
         NWC_LNURL_DOMAIN_FILE = toString lnurlCfg.domainFile;
       });
 
-      serviceConfig = {
+      # Apply the nix-bitcoin "strict" hardening profile to the only
+      # internet-adjacent unit, then narrow networking to loopback. The service
+      # only talks to Alby Hub on 127.0.0.1:${toString albyhub.port}.
+      serviceConfig = nbLib.defaultHardening // {
         Type = "simple";
         User = albyhub.user;
         Group = albyhub.group;
         ExecStart = "${lnurlCfg.package}/bin/nwc-lnurl";
         Restart = "on-failure";
         RestartSec = "10s";
+        # Loopback-only egress: the full hub token in memory must not be able to
+        # pivot to the wider network if the process is compromised.
+        IPAddressAllow = nbLib.allowLocalIPAddresses.IPAddressAllow;
         UMask = "0027";
         NoNewPrivileges = true;
         PrivateTmp = true;

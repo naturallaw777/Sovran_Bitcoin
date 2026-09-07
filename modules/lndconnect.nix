@@ -78,6 +78,26 @@ in {
 
   config = mkIf (cfg.enable && cfg.lndconnect.enable) (mkMerge [
     {
+      # SECURITY: onion=false binds the LND REST *admin* API (carrying the
+      # admin macaroon) to 0.0.0.0. Publishing that on the LAN/clearnet without
+      # a firewall is a full-funds exposure, so fail closed unless the operator
+      # consciously opens the firewall for the REST port.
+      assertions = [
+        {
+          assertion = cfg.lndconnect.onion
+            || (
+              config.networking.firewall.enable
+              && lib.elem cfg.restPort config.networking.firewall.allowedTCPPorts
+            );
+          message = ''
+            services.lnd.lndconnect: onion = false binds the LND REST admin API to
+            0.0.0.0. You MUST enable networking.firewall and allow TCP port
+            ${toString cfg.restPort}, or set services.lnd.lndconnect.onion = true
+            (recommended for this Tor-first stack).
+          '';
+        }
+      ];
+
       environment.systemPackages = [(
         mkLndconnect {
           name = "lndconnect";

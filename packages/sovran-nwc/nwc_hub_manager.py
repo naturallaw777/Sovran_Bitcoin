@@ -267,6 +267,12 @@ class AlbyHubManager:
             raise
 
     def _obtain_token(self, password: str) -> str:
+        # NOTE (security): Alby Hub unlock tokens are binary ("full" | "read"),
+        # so a receive-only service still requires a *full* token to mint
+        # invoices (POST /api/invoices with toAppId). This credential grants
+        # full hub admin over every managed wallet, so any caller of this
+        # manager (e.g. the nwc-lnurl unit) MUST stay loopback-only and run
+        # under the strict systemd sandbox (see modules/lnurl.nix).
         info = self._request("GET", "/api/info", timeout=10)
         if info.get("running"):
             resp = self._request(
@@ -589,57 +595,23 @@ class AlbyHubManager:
         if transferable_msat == 0:
             return {"ok": True, "drained_sats": 0, "dust_msat": expected_dust_msat}
 
-        # Save original permissions
-        original_scopes = list(app.get("scopes") or [])
-        original_max = app.get("maxAmountSat") or 0
-        original_renewal = app.get("budgetRenewal") or "never"
-
-        # Temporarily grant pay_invoice scope with sufficient budget
-        app_pubkey = app.get("appPubkey") or app.get("nostrPubkey") or app.get("pubkey") or ""
-        if not app_pubkey:
-            raise AlbyHubError(
-                "app_pubkey_missing",
-                "Cannot drain app: app public key not available.",
-            )
-
-        patch_body = {
-            "scopes": sorted(set(original_scopes) | {"pay_invoice"}),
-            "maxAmountSat": 0,
-            "budgetRenewal": "never",
-        }
-        self._authenticated_request("PATCH", f"/api/apps/{app_pubkey}", body=patch_body)
-
-        drain_error: AlbyHubError | None = None
-        drained_sats = 0
-        try:
-            self._authenticated_request(
-                "POST",
-                "/api/transfers",
-                body={
-                    "fromAppId": app_id,
-                    "amountMsat": transferable_msat,
-                    "description": f"Drain isolated subwallet {app.get('name', '')}",
-                },
-            )
-            drained_sats = transferable_msat // 1000
-        except AlbyHubError as exc:
-            drain_error = exc
-        finally:
-            # Restore original permissions whether drain succeeded or not
-            restore_body = {
-                "scopes": original_scopes,
-                "maxAmountSat": original_max,
-                "budgetRenewal": original_renewal,
-            }
-            try:
-                self._authenticated_request(
-                    "PATCH", f"/api/apps/{app_pubkey}", body=restore_body
-                )
-            except AlbyHubError:
-                pass  # best-effort restore; don't mask the original error
-
-        if drain_error is not None:
-            raise drain_error
+        # An internal wallet-to-wallet transfer does NOT require the isolated
+        # source app to hold `pay_invoice`: the patched Alby Hub performs the
+        # move authorized by the manager's full token without requiring the
+        # source app to hold that scope. So no temporary scope grant (and the
+        # associated privilege window) is needed here. This depends on the hub
+        # `sovran` branch patch that lets internal `Transfer` skip the
+        # source-app `pay_invoice` check.
+        self._authenticated_request(
+            "POST",
+            "/api/transfers",
+            body={
+                "fromAppId": app_id,
+                "amountMsat": transferable_msat,
+                "description": f"Drain isolated subwallet {app.get('name', '')}",
+            },
+        )
+        drained_sats = transferable_msat // 1000
 
         # Verify remaining balance equals expected dust
         refreshed = self._authenticated_request("GET", f"/api/v2/apps/{app_id}")

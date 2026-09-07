@@ -14,6 +14,7 @@ and internal credentials are never returned to callers.
 
 from __future__ import annotations
 
+import ipaddress
 import json
 import logging
 import os
@@ -40,10 +41,14 @@ DOMAIN_FILE = os.environ.get("NWC_LNURL_DOMAIN_FILE", "/var/lib/domains/lightnin
 
 NWC_ALIAS_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,31}$")
 
-# Rate limiting configuration
-RATE_LIMIT_WINDOW_SEC = 60
-RATE_LIMIT_MAX_REQUESTS = 30
+# Rate limiting configuration (all tunable via env)
+RATE_LIMIT_WINDOW_SEC = int(os.environ.get("NWC_LNURL_RATE_LIMIT_WINDOW", "60"))
+RATE_LIMIT_MAX_REQUESTS = int(os.environ.get("NWC_LNURL_RATE_LIMIT_MAX", "30"))
+# Separate, stricter per-Lightning-Address budget so a single alias cannot be
+# hammered to mint invoices regardless of the source IP.
+RATE_LIMIT_MAX_PER_ALIAS = int(os.environ.get("NWC_LNURL_RATE_LIMIT_MAX_PER_ALIAS", "10"))
 _rate_limit_buckets: dict[str, list[float]] = defaultdict(list)
+_rate_limit_alias_buckets: dict[str, list[float]] = defaultdict(list)
 
 # ── Helpers ───────────────────────────────────────────────────────
 
@@ -85,6 +90,23 @@ def _check_rate_limit(client_ip: str) -> bool:
     while bucket and bucket[0] < cutoff:
         bucket.pop(0)
     if len(bucket) >= RATE_LIMIT_MAX_REQUESTS:
+        return False
+    bucket.append(now)
+    return True
+
+
+def _check_alias_rate_limit(alias: str) -> bool:
+    """Check and update the per-Lightning-Address rate limit bucket.
+
+    Returns True if allowed. `alias` is always regex-validated by the caller
+    before reaching this point, so it is safe to use as a dict key.
+    """
+    now = time.monotonic()
+    bucket = _rate_limit_alias_buckets[alias]
+    cutoff = now - RATE_LIMIT_WINDOW_SEC
+    while bucket and bucket[0] < cutoff:
+        bucket.pop(0)
+    if len(bucket) >= RATE_LIMIT_MAX_PER_ALIAS:
         return False
     bucket.append(now)
     return True
@@ -229,10 +251,17 @@ def _make_handler(manager: "AlbyHubManager") -> type:
             # Check X-Forwarded-For header (set by Caddy)
             forwarded = self.headers.get("X-Forwarded-For")
             if forwarded:
-                # Take the first IP in the chain
-                return forwarded.split(",")[0].strip()
-            # Fallback to direct connection IP
-            return self.client_address[0]
+                # Take the first IP in the chain (trusts the proxy to set this).
+                candidate = forwarded.split(",")[0].strip()
+            else:
+                candidate = self.client_address[0]
+            # Validate the IP so a malformed/forged value cannot be used as a
+            # rate-limit key or written (unescaped) into the audit log.
+            try:
+                ipaddress.ip_address(candidate)
+                return candidate
+            except ValueError:
+                return "unknown"
 
         def _check_rate_limit(self) -> bool:
             client_ip = self._get_client_ip()
@@ -244,6 +273,20 @@ def _make_handler(manager: "AlbyHubManager") -> type:
                 _audit_mod.audit_log(
                     "rate_limit_exceeded",
                     client_ip=client_ip,
+                    path=self.path,
+                )
+                return False
+            return True
+
+        def _check_alias_rate_limit(self, alias: str) -> bool:
+            if not _check_alias_rate_limit(alias):
+                self._send_json(429, {
+                    "status": "ERROR",
+                    "reason": "Rate limit exceeded for this Lightning Address. Please slow down.",
+                })
+                _audit_mod.audit_log(
+                    "rate_limit_exceeded",
+                    alias=alias,
                     path=self.path,
                 )
                 return False
@@ -264,6 +307,8 @@ def _make_handler(manager: "AlbyHubManager") -> type:
             )
             if m:
                 alias = urllib.parse.unquote(m.group(1))
+                if not self._check_alias_rate_limit(alias):
+                    return
                 payload, code = _lnurl_discovery(alias, self._manager, client_ip)
                 self._send_json(code, payload)
                 return
@@ -272,6 +317,8 @@ def _make_handler(manager: "AlbyHubManager") -> type:
             m = re.fullmatch(r"/lnurlp/([^/]+)/callback", path)
             if m:
                 alias = urllib.parse.unquote(m.group(1))
+                if not self._check_alias_rate_limit(alias):
+                    return
                 amount_values = qs.get("amount")
                 if not amount_values:
                     amount_str = None

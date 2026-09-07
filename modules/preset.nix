@@ -175,6 +175,10 @@ in {
 
     # ── Secrets / operator / nodeinfo ─────────────────────────────────
     nix-bitcoin.generateSecrets = true;
+    # Hide service command lines from non-privileged users via D-Bus
+    # GetUnitProcesses (the operator stays able to read them via the `proc`
+    # group). Defense-in-depth: nothing in this stack passes secrets on argv.
+    nix-bitcoin.security.dbusHideProcessInformation = true;
     nix-bitcoin.nodeinfo.enable = true;
 
     nix-bitcoin.operator = {

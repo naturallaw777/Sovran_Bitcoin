@@ -95,6 +95,12 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.cmd == "address" and args.address_cmd == "show":
         alias = args.alias.strip().lower()
+        if not _nwc_validate_alias(alias):
+            print(
+                "Error: alias_invalid - Alias must be lowercase letters, digits, '_' or '-'.",
+                file=sys.stderr,
+            )
+            return 1
         test = _nwc_test_address(alias)
         _print(test)
         return 0 if test.get("ok") else 1
