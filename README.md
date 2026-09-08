@@ -11,7 +11,7 @@ Think *"nix-bitcoin, but Sovran-opinionated"*:
 - **Hardened** — every service runs with nix-bitcoin's strict systemd sandboxing
 - **Vendored, pinned packages** — RTL, Mempool and Sovran's LND-only Alby Hub
   fork are built by this flake; BTCPay Server / NBXplorer are pinned to
-  `nixos-26.05` exactly like Sovran_SystemsOS
+  `nixos-26.05`
 - **Secrets handled for you** — RPC passwords, macaroons and TLS certs are
   generated on the host at activation (`nix-bitcoin.generateSecrets`)
 - **No webserver opinions** — everything binds to loopback; clearnet is *your*
