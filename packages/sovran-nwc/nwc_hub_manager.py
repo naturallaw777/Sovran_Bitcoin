@@ -402,16 +402,67 @@ class AlbyHubManager:
         apps = self._paginate("/api/apps?limit={limit}&offset={offset}&order_by=created_at")
         return [a for a in apps if a.get("isolated") and self._is_managed_app(a)]
 
+    @staticmethod
+    def _app_pubkey(app: dict) -> str:
+        return (
+            app.get("appPubkey") or app.get("nostrPubkey") or app.get("pubkey") or ""
+        )
+
+    def _app_alias(self, app: dict) -> str:
+        """Return the wallet's alias.
+
+        The alias lives in the app's ``metadata.lnurl_alias`` — apps have no
+        top-level ``alias`` field, so ``app.get("alias")`` is always empty.
+        """
+        meta = self._parse_metadata(app.get("metadata"))
+        return str(meta.get("lnurl_alias", "") or "").strip()
+
     def _find_managed_app(self, identifier: str) -> dict | None:
-        needle = identifier.strip().lower()
-        for app in self._all_managed_apps():
+        """Resolve a wallet by id, pubkey, name, alias or Lightning Address.
+
+        ``nwc-wallet list`` prints ``name``, ``alias`` and ``lightning_address``
+        for every wallet, and the CLI's ``delete``/``drain``/``rotate``
+        subcommands take a single free-form ``<wallet>`` argument — so all of
+        those identifiers must resolve here. Matching on only the numeric id
+        and pubkey made every listed wallet "not found" when addressed by the
+        name it was listed under.
+
+        Matching is case- and whitespace-insensitive. Raises ``wallet_ambiguous``
+        if more than one wallet matches on name/alias.
+        """
+        needle = str(identifier or "").strip().lower()
+        if not needle:
+            return None
+
+        apps = self._all_managed_apps()
+
+        # Unambiguous identifiers win outright.
+        for app in apps:
             if str(app.get("id", "")).lower() == needle:
                 return app
-            pubkey = (
-                app.get("appPubkey") or app.get("nostrPubkey") or app.get("pubkey") or ""
-            ).lower()
-            if pubkey == needle:
+        for app in apps:
+            if self._app_pubkey(app).lower() == needle:
                 return app
+
+        # Human-facing identifiers: wallet name, alias, or alias@domain.
+        local_part = needle.split("@", 1)[0]
+        matches: dict[str, dict] = {}
+        for app in apps:
+            name = str(app.get("name", "") or "").strip().lower()
+            alias = self._app_alias(app).lower()
+            if not name and not alias:
+                continue
+            if needle in (name, alias) or (local_part and local_part == alias):
+                matches[str(app.get("id", ""))] = app
+
+        if len(matches) > 1:
+            raise AlbyHubError(
+                "wallet_ambiguous",
+                f"Multiple wallets match '{identifier.strip()}'. "
+                "Re-run using the wallet id from 'nwc-wallet list'.",
+            )
+        if matches:
+            return next(iter(matches.values()))
         return None
 
     # ── Public API ─────────────────────────────────────────────────
@@ -627,7 +678,7 @@ class AlbyHubManager:
             "wallet_drained",
             wallet_id=str(app_id),
             name=app.get("name", ""),
-            alias=app.get("alias", ""),
+            alias=self._app_alias(app),
             drained_sats=drained_sats,
             dust_msat=expected_dust_msat,
         )
@@ -690,7 +741,7 @@ class AlbyHubManager:
             "wallet_deleted",
             wallet_id=str(app_id),
             name=app.get("name", ""),
-            alias=app.get("alias", ""),
+            alias=self._app_alias(app),
             drained_sats=drain_result.get("drained_sats", 0),
             dust_msat=remaining_msat,
         )
@@ -779,7 +830,7 @@ class AlbyHubManager:
         # For now, we'll delete and re-create with same metadata
         # This is a safe operation since we drain first
         name = app.get("name", "")
-        alias = app.get("alias", "")
+        alias = self._app_alias(app)
         scopes = app.get("scopes") or []
         max_amount = app.get("maxAmountSat") or 0
         metadata = app.get("metadata") or {}

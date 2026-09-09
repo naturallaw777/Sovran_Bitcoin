@@ -144,9 +144,9 @@ Disable a piece of the base stack:
   | `nwc-wallet lnurl <alias> [--qr]` | Show the Lightning Address, bech32 LNURL, and optionally a terminal QR code for receiving payments. |
   | `nwc-wallet lnurl <alias> --address-only` | Print only the Lightning Address (e.g. for piping). |
   | `nwc-wallet lnurl <alias> --lnurl-only` | Print only the bech32 LNURL string. |
-  | `nwc-wallet drain <wallet>` | Drain funds from a wallet. |
-  | `nwc-wallet delete <wallet>` | Delete a wallet. |
-  | `nwc-wallet rotate <wallet>` | Generate a new NWC connection secret (old one is revoked). |
+  | `nwc-wallet drain <wallet>` | Drain funds from a wallet. `<wallet>` may be its **name**, alias, Lightning Address or id, as printed by `nwc-wallet list`. |
+  | `nwc-wallet delete <wallet>` | Drain, then delete a wallet. `<wallet>` may be its **name**, alias, Lightning Address or id, as printed by `nwc-wallet list`. |
+  | `nwc-wallet rotate <wallet>` | Generate a new NWC connection secret (old one is revoked). `<wallet>` accepts the same identifiers as `delete`. |
   | `nwc-wallet address show <alias>` | Test if a Lightning Address endpoint is publicly reachable. |
   | `nwc-wallet health` | Check Alby Hub health. |
 

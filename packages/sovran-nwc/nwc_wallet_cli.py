@@ -15,6 +15,17 @@ from .nwc_helpers import (
 )
 
 
+def _print_error(exc: "_mgr_mod.AlbyHubError") -> None:
+    """Print a hub error, with a hint when a wallet could not be resolved."""
+    print(f"Error: {exc.code} - {exc}", file=sys.stderr)
+    if exc.code == "wallet_not_found":
+        print(
+            "Hint: wallets can be given by name, alias, Lightning Address or id.\n"
+            "      Run 'nwc-wallet list' to see the wallets this node manages.",
+            file=sys.stderr,
+        )
+
+
 def _print(data) -> None:
     print(json.dumps(data, indent=2, sort_keys=True))
 
@@ -38,10 +49,16 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("list")
 
     drain = sub.add_parser("drain")
-    drain.add_argument("wallet")
+    drain.add_argument(
+        "wallet",
+        help="Wallet name, alias, Lightning Address or id (see 'nwc-wallet list')",
+    )
 
     delete = sub.add_parser("delete")
-    delete.add_argument("wallet")
+    delete.add_argument(
+        "wallet",
+        help="Wallet name, alias, Lightning Address or id (see 'nwc-wallet list')",
+    )
 
     addr = sub.add_parser("address")
     addr_sub = addr.add_subparsers(dest="address_cmd", required=True)
@@ -49,7 +66,10 @@ def main(argv: list[str] | None = None) -> int:
     addr_show.add_argument("alias")
 
     rotate = sub.add_parser("rotate")
-    rotate.add_argument("wallet")
+    rotate.add_argument(
+        "wallet",
+        help="Wallet name, alias, Lightning Address or id (see 'nwc-wallet list')",
+    )
 
     sub.add_parser("health")
 
@@ -83,7 +103,7 @@ def main(argv: list[str] | None = None) -> int:
         try:
             wallets = manager.list_wallets(domain)
         except _mgr_mod.AlbyHubError as exc:
-            print(f"Error: {exc.code} - {exc}", file=sys.stderr)
+            _print_error(exc)
             return 1
         _print({"wallets": wallets})
         return 0
@@ -109,7 +129,7 @@ def main(argv: list[str] | None = None) -> int:
         try:
             result = manager.drain_wallet(args.wallet)
         except _mgr_mod.AlbyHubError as exc:
-            print(f"Error: {exc.code} - {exc}", file=sys.stderr)
+            _print_error(exc)
             return 1
         _print(result)
         return 0
@@ -118,7 +138,7 @@ def main(argv: list[str] | None = None) -> int:
         try:
             result = manager.delete_wallet(args.wallet)
         except _mgr_mod.AlbyHubError as exc:
-            print(f"Error: {exc.code} - {exc}", file=sys.stderr)
+            _print_error(exc)
             return 1
         _print(result)
         return 0
@@ -127,7 +147,7 @@ def main(argv: list[str] | None = None) -> int:
         try:
             result = manager.rotate_wallet_secret(args.wallet)
         except _mgr_mod.AlbyHubError as exc:
-            print(f"Error: {exc.code} - {exc}", file=sys.stderr)
+            _print_error(exc)
             return 1
         _print({
             "wallet_id": result.get("wallet_id", ""),
@@ -225,7 +245,7 @@ def main(argv: list[str] | None = None) -> int:
                 domain,
             )
         except _mgr_mod.AlbyHubError as exc:
-            print(f"Error: {exc.code} - {exc}", file=sys.stderr)
+            _print_error(exc)
             return 1
 
         lightning_address = _nwc_lightning_address(alias, domain)

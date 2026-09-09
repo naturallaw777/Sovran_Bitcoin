@@ -13,9 +13,21 @@
 
 stdenvNoCC.mkDerivation {
   pname = "sovran-nwc";
-  version = "1.1.3";
+  version = "1.1.4";
 
   src = ./.;
+
+  # stdlib-only unit tests. They bind a fake hub on 127.0.0.1 and skip
+  # themselves where loopback sockets are unavailable (e.g. an isolated
+  # build sandbox), so they are safe to run unconditionally.
+  doCheck = true;
+  nativeCheckInputs = [ python3 ];
+
+  checkPhase = ''
+    runHook preCheck
+    python3 tests/test_wallet_lookup.py
+    runHook postCheck
+  '';
 
   installPhase = ''
     runHook preInstall
