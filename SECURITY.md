@@ -65,10 +65,12 @@ We will not pursue legal action against researchers acting in good faith under t
 These reflect the defaults and the remediations from the security audit
 (`security-audit-fixes.patch`):
 
-1. **Keep admin UIs off the clearnet.** Alby Hub (`127.0.0.1:18080`), RTL (`127.0.0.1:3050`),
+1. **Keep admin endpoints off the clearnet.** RTL (`127.0.0.1:3050/rtl`),
    BTCPay (`127.0.0.1:23000`), and the LNURL service (`127.0.0.1:8181`) are loopback-only by
-   design. Expose them only through an authenticated, TLS-terminating reverse proxy, preferably over
-   their Tor onion services. **Never** open port `8181` directly to the internet.
+   design. Expose UIs only through an authenticated, TLS-terminating reverse proxy, preferably over
+   their Tor onion services. Alby Hub (`127.0.0.1:18080`) is a **management API with no web UI**
+   — use `nwc-wallet` on the node; do not reverse-proxy it. **Never** open port `8181` directly to
+   the internet.
 2. **LNURL (`sovran-lnurl`)** is the only internet-adjacent component. Apply the audit patch that
    adds `nbLib.defaultHardening` + loopback-only egress to the `nwc-lnurl` unit, and keep it behind
    a proxy that (a) enforces TLS, (b) sets a trustworthy `X-Forwarded-For`, and (c) adds its own

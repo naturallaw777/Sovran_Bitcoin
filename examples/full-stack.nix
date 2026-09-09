@@ -10,8 +10,8 @@
 #   -----------  -------------------------------
 #   BTCPay       http://127.0.0.1:23000   (also NBXplorer at :24444)
 #   Mempool UI   http://127.0.0.1:60845
-#   RTL          http://127.0.0.1:3050
-#   Alby Hub UI  http://127.0.0.1:18080   (keep private! SSH tunnel or onion)
+#   RTL          http://127.0.0.1:3050/rtl
+#   Alby Hub     http://127.0.0.1:18080   (API only, no UI — use nwc-wallet)
 #   LNURL        http://127.0.0.1:8181    (proxy /.well-known/lnurlp and /lnurlp)
 #
 # All of them also get Tor onion services (nix-bitcoin.onionServices.*).

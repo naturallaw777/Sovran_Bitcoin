@@ -68,10 +68,10 @@ That gives you, with zero further config:
 ```nix
 {
   sovran-bitcoin.features = {
-    rtl = true;          # Ride The Lightning (LND web UI) on 127.0.0.1:3050
+    rtl = true;          # Ride The Lightning (LND web UI) at http://127.0.0.1:3050/rtl
     btcpayserver = true; # BTCPay + NBXplorer (Postgres), LND backend
     mempool = true;      # Mempool explorer (MariaDB), UI on 127.0.0.1:60845
-    nwc = true;          # Alby Hub (Sovran LND-only fork) on 127.0.0.1:18080
+    nwc = true;          # NWC via Alby Hub (no web UI; manage with nwc-wallet)
     lnurl = true;        # self-hosted Lightning Addresses via NWC + LNURL
   };
 
@@ -95,12 +95,23 @@ your own webserver (nginx, Caddy, …) in front:
 |-------------|---------------------------|------------------------------------------------|
 | BTCPay      | `http://127.0.0.1:23000`  | reverse-proxy + TLS; see BTCPay docs for headers |
 | Mempool UI  | `http://127.0.0.1:60845`  | nginx snippets are exposed (see below)          |
-| RTL         | `http://127.0.0.1:3050`   | password in `/etc/nix-bitcoin-secrets/rtl-password` |
-| Alby Hub UI | `http://127.0.0.1:18080`  | keep private — SSH tunnel or onion recommended  |
+| RTL         | `http://127.0.0.1:3050/rtl` | password in `/etc/nix-bitcoin-secrets/rtl-password` |
+| NWC (Alby Hub) | `http://127.0.0.1:18080` (API only) | **no web UI** — manage with `nwc-wallet`; keep loopback |
 | LNURL       | `http://127.0.0.1:8181`   | proxy `/.well-known/lnurlp/*` and `/lnurlp/*` of your Lightning domain |
 
 Mempool ships reusable nginx snippets for public hosting — build on
 `config.services.mempool.frontend.nginxConfig.{httpConfig,staticContent,proxyApi}`.
+
+### Accessing RTL
+
+The UI is served at `/rtl/` (Ride The Lightning's default). A request to `/`
+redirects there, so the loopback URL, an SSH tunnel, and the onion vhost all
+work without a reverse-proxy path rewrite.
+
+- **On the node:** `http://127.0.0.1:3050/rtl` — password in
+  `/etc/nix-bitcoin-secrets/rtl-password`
+- **SSH tunnel:** `ssh -L 3050:127.0.0.1:3050 alice@your-node` then the same URL
+- **Tor:** `http://<onion>/rtl` — `nodeinfo` prints the onion (port 80 maps to 3050)
 
 ## Plain options underneath
 
@@ -135,7 +146,8 @@ Disable a piece of the base stack:
 - `nodeinfo` — service/onion status report
 - `lndconnect` — QR / URI for Zeus & other LND connect apps
 - `nwc-wallet` — manage NWC wallets from the CLI
-  (talks to Alby Hub; exported with the right env when `nwc` is enabled)
+  (Sovran's Alby Hub fork has **no web UI**; this CLI is the operator
+  interface. Env is baked in when `nwc` is enabled.)
 
   | Subcommand | What it does |
   |---|---|

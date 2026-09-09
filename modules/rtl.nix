@@ -80,6 +80,15 @@ let
       description = "The package providing RTL (vendored, pinned by the Sovran Bitcoin flake).";
     };
 
+    # Exposed so tests (and operators) can inspect the generated RTL-Config.json
+    # without scraping ExecStartPre. `multiPass` is the `@multiPass@` placeholder.
+    configJson = mkOption {
+      internal = true;
+      type = types.attrs;
+      default = {};
+      description = "Generated RTL-Config.json structure (password is a placeholder).";
+    };
+
     tor = nbLib.tor;
   };
 
@@ -93,6 +102,10 @@ let
     multiPass = "@multiPass@";
     port = cfg.port;
     host = cfg.address;
+    # 0.15.12 login lockout keys on the connecting address. Tor and any
+    # loopback reverse proxy dial 127.0.0.1; trusting that hop uses
+    # X-Forwarded-For so a single proxy does not share one lockout counter.
+    trustedProxies = "127.0.0.1";
     defaultNodeIndex = 1;
     dbDirectoryPath = cfg.dataDir;
     SSO = {
@@ -115,7 +128,7 @@ let
         themeColor = "PURPLE";
         channelBackupPath = "${cfg.dataDir}/backup";
         logLevel = "INFO";
-        lnServerUrl = "https://${lnd.restAddress}:${toString lnd.restPort}";
+        lnServerUrl = "https://${nbLib.addressWithPort lnd.restAddress lnd.restPort}";
         swapServerUrl = if cfg.nodes.lnd.loop then "https://127.0.0.1:8081" else "";
         boltzServerUrl = "";
         fiatConversion = cfg.extraCurrency != null;
@@ -168,8 +181,14 @@ in {
 
     services.lnd.enable = mkIf cfg.nodes.lnd.enable true;
 
+    services.rtl.configJson = rtlConfig;
+
     systemd.tmpfiles.rules = [
       "d '${cfg.dataDir}' 0770 ${cfg.user} ${cfg.group} - -"
+      "d '${cfg.dataDir}/backup' 0770 ${cfg.user} ${cfg.group} - -"
+      "d '${cfg.dataDir}/logs' 0770 ${cfg.user} ${cfg.group} - -"
+      "d '${cfg.dataDir}/database' 0770 ${cfg.user} ${cfg.group} - -"
+      "d '${cfg.dataDir}/macaroons' 0770 ${cfg.user} ${cfg.group} - -"
     ];
 
     services.rtl.tor.enforce = mkIf (cfg.extraCurrency != null) false;
@@ -197,6 +216,7 @@ in {
         # Show "rtl" instead of "node" in the journal
         SyslogIdentifier = "rtl";
         User = cfg.user;
+        WorkingDirectory = cfg.dataDir;
         Restart = "on-failure";
         RestartSec = "10s";
         ReadWritePaths = [ cfg.dataDir ];

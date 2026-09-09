@@ -115,6 +115,13 @@
           inherit nixpkgs;
           inherit overlay;
         };
+
+        # RTL schema + loopback listen (UI is served under /rtl/).
+        rtl = import ./tests/rtl.nix {
+          inherit system;
+          inherit nixpkgs;
+          inherit overlay;
+        };
       });
   };
 }

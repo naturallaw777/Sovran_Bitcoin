@@ -5,8 +5,8 @@
 #   - relay configurable (`services.albyhub.relay`)
 #   - dataDir configurable
 #
-# The management UI binds to 127.0.0.1 only. Expose it via SSH tunnel,
-# a reverse proxy, or an onion service of your choice.
+# The management API binds to 127.0.0.1 only. There is no web UI;
+# operators manage wallets with `nwc-wallet`.
 { config, lib, pkgs, ... }:
 
 with lib;
@@ -18,7 +18,8 @@ let
       description = ''
         Enable Alby Hub, a self-hosted NWC wallet server (Sovran's LND-only fork:
         no built-in frontend, loopback bind, always-private route hints).
-        Wallets connect over Nostr Wallet Connect; manage the hub at
+        Wallets connect over Nostr Wallet Connect. There is no web UI; manage
+        wallets with `nwc-wallet`. The local API listens on
         {option}`services.albyhub.address`:{option}`services.albyhub.port`.
       '';
     };
@@ -33,13 +34,13 @@ let
     address = mkOption {
       type = types.str;
       default = "127.0.0.1";
-      description = "Address the management API/UI binds to. Keep this on loopback.";
+      description = "Address the management API binds to. Keep this on loopback.";
     };
 
     port = mkOption {
       type = types.port;
       default = 18080;
-      description = "Port the management API/UI binds to.";
+      description = "Port the management API binds to. Not a web UI.";
     };
 
     dataDir = mkOption {

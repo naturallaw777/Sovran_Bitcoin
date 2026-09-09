@@ -10,11 +10,11 @@
 }:
 let self = stdenvNoCC.mkDerivation {
   pname = "rtl";
-  version = "0.15.11";
+  version = "0.15.12";
 
   src = fetchurl {
     url = "https://github.com/Ride-The-Lightning/RTL/archive/refs/tags/v${self.version}.tar.gz";
-    hash = "sha256-sD6i8hbI4iJDwy+wY3MfC4LnpmMatO5P12M0ZzEHwyM=";
+    hash = "sha256-4KrSsmeDYehxNIFIqucw7qIDrNNNYugFDvBopUvvHmE=";
   };
 
   passthru = {
@@ -26,7 +26,7 @@ let self = stdenvNoCC.mkDerivation {
       # TODO-EXTERNAL: Remove `npmFlags` when no longer required
       # See: https://github.com/Ride-The-Lightning/RTL/issues/1182
       npmFlags = "--legacy-peer-deps";
-      hash = "sha256-/2kscQdpqUy87LRbojRmBwn3SlfP2RUyHup4cejAy+0=";
+      hash = "sha256-PcYYPZOBLIfRKSGb6+LoEEytD+eMI7sTfoDm4huOdFE=";
     };
   };
 
@@ -35,6 +35,17 @@ let self = stdenvNoCC.mkDerivation {
   ];
 
   phases = "unpackPhase patchPhase installPhase";
+
+  # The prebuilt Angular app uses <base href="/rtl/"> and PathLocationStrategy.
+  # Express still catch-all-serves index.html at `/`, so a visit to the
+  # documented loopback URL or the onion vhost (port 80 → RTL) boots Angular
+  # on `/` and renders a blank page. Send `/` to `/rtl/` before the API mount.
+  postPatch = ''
+    substituteInPlace backend/utils/app.js \
+      --replace-fail \
+      "this.app.use(this.common.baseHref + '/api', sharedRoutes);" \
+      "this.app.get('/', (req, res) => res.redirect(this.common.baseHref + '/')); this.app.use(this.common.baseHref + '/api', sharedRoutes);"
+  '';
 
   # `src` already contains the precompiled frontend and backend.
   # Copy all files required for packaging, like in
