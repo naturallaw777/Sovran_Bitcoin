@@ -95,23 +95,10 @@ your own webserver (nginx, Caddy, …) in front:
 |-------------|---------------------------|------------------------------------------------|
 | BTCPay      | `http://127.0.0.1:23000`  | reverse-proxy + TLS; see BTCPay docs for headers |
 | Mempool UI  | `http://127.0.0.1:60845`  | nginx snippets are exposed (see below)          |
-| RTL         | `http://127.0.0.1:3050/rtl` | password in `/etc/nix-bitcoin-secrets/rtl-password` |
-| NWC (Alby Hub) | `http://127.0.0.1:18080` (API only) | **no web UI** — manage with `nwc-wallet`; keep loopback |
 | LNURL       | `http://127.0.0.1:8181`   | proxy `/.well-known/lnurlp/*` and `/lnurlp/*` of your Lightning domain |
 
 Mempool ships reusable nginx snippets for public hosting — build on
 `config.services.mempool.frontend.nginxConfig.{httpConfig,staticContent,proxyApi}`.
-
-### Accessing RTL
-
-The UI is served at `/rtl/` (Ride The Lightning's default). A request to `/`
-redirects there, so the loopback URL, an SSH tunnel, and the onion vhost all
-work without a reverse-proxy path rewrite.
-
-- **On the node:** `http://127.0.0.1:3050/rtl` — password in
-  `/etc/nix-bitcoin-secrets/rtl-password`
-- **SSH tunnel:** `ssh -L 3050:127.0.0.1:3050 alice@your-node` then the same URL
-- **Tor:** `http://<onion>/rtl` — `nodeinfo` prints the onion (port 80 maps to 3050)
 
 ## Plain options underneath
 
