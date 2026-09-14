@@ -3,8 +3,8 @@
 # Called via the flake overlay:
 #   pkgs.sovran-bitcoin.<name>
 #
-# btcpayserver and nbxplorer are not built here; the overlay adds the
-# versions from the flake's nixpkgs input.
+# BTCPay Server and NBXplorer are supplied directly by nixpkgs and are
+# not part of this package set.
 { lib
 , callPackage
 , ...

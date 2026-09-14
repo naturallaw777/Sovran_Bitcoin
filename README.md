@@ -158,7 +158,7 @@ Disable a piece of the base stack:
 | Output | What |
 |--------|------|
 | `nixosModules.default` (`.sovran-bitcoin`) | all modules + `sovran-bitcoin.*` options, auto-applies the package overlay |
-| `overlays.default` (`.sovran-bitcoin`) | adds `pkgs.sovran-bitcoin.*` (rtl, mempool, albyhub, nwc, BTCPay Server and NBXplorer from nixpkgs) |
+| `overlays.default` (`.sovran-bitcoin`) | adds `pkgs.sovran-bitcoin.*` (rtl, mempool, albyhub and nwc) |
 | `packages.<system>.*` | `rtl`, `mempool-backend`, `mempool-frontend`, `albyhub`, `nwc` |
 | `checks.<system>.*` | evaluation checks + the BTCPay/bitcoind hardening test |
 
