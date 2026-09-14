@@ -21,25 +21,32 @@ rec {
   nodejs = nodejs_22;
   nodejsRuntime = nodejs-slim_22;
 
-  version = "3.2.1";
+  version = "3.3.1";
 
   src = fetchFromGitHub {
     owner = "mempool";
     repo = "mempool";
     tag = "v${version}";
-    hash = "sha256-O2XPD1/BXQnzuOP/vMVyRfmFZEgjA85r+PShWne0vqU=";
+    hash = "sha256-Py+ou6xwgentp1PNluDNPjw+gdWM3HxWVPHewuo/5hE=";
   };
 
   nodeModules = {
     frontend = fetchNodeModules {
       inherit src nodejs;
       sourceRoot = "source/frontend";
-      hash = "sha256-+jfgsAkDdYvgso8uSHaBj/sQL3fC/ABQWzVTXfdZcU0=";
+      # v3.3.1's frontend/package-lock.json (lockfileVersion 2) omits the
+      # optional/peer chokidar@4 + readdirp@4 entries that newer npm (as
+      # shipped by nodejs_22 here) expects to see, so a plain `npm ci`
+      # rejects the lockfile as out of sync. `--legacy-peer-deps` sidesteps
+      # npm's stricter peer-dep resolution, same workaround already used
+      # for RTL above (see Ride-The-Lightning/RTL#1182).
+      npmFlags = "--legacy-peer-deps";
+      hash = "sha256-uSRauud9sOgxG59fJvv5hieFHs3Pi6asV/L1slheDS0=";
     };
     backend = fetchNodeModules {
       inherit src nodejs;
       sourceRoot = "source/backend";
-      hash = "sha256-y5l2SYZYK9SKSy6g0+mtTWD6JFkkdQHHBboECpEvWZ4=";
+      hash = "sha256-guVPIjYRvReyGZ6JHDDuYWEZvsP6lVH22qzIwl2WogA=";
     };
   };
 
