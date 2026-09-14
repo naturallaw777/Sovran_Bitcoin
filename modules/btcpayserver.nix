@@ -26,8 +26,8 @@ let
       };
       package = mkOption {
         type = types.package;
-        default = pkgs.sovran-bitcoin.nbxplorer;
-        defaultText = "pkgs.sovran-bitcoin.nbxplorer";
+        default = pkgs.nbxplorer;
+        defaultText = "pkgs.nbxplorer";
         description = "The package providing nbxplorer binaries.";
       };
       dataDir = mkOption {
@@ -47,7 +47,7 @@ let
       # be nix-bitcoin <=0.0.91)
       addNetworkSymlink = mkOption {
         readOnly = true;
-        default = pkgs.sovran-bitcoin.nbxplorer != cfg.nbxplorer.package;
+        default = pkgs.nbxplorer != cfg.nbxplorer.package;
         description = ''
           Whether to add a compatibility symlink (like `${cfg.nbxplorer.dataDir}/Main`)
           to the dataDir.
@@ -83,8 +83,8 @@ let
       };
       package = mkOption {
         type = types.package;
-        default = pkgs.sovran-bitcoin.btcpayserver;
-        defaultText = "pkgs.sovran-bitcoin.btcpayserver";
+        default = pkgs.btcpayserver;
+        defaultText = "pkgs.btcpayserver";
         description = "The package providing BTCPay Server binaries.";
       };
       address = mkOption {
