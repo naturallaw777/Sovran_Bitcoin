@@ -10,8 +10,7 @@ Think *"nix-bitcoin, but Sovran-opinionated"*:
 - **Tor-first** — proxied, enforced, with onion services for everything
 - **Hardened** — every service runs with nix-bitcoin's strict systemd sandboxing
 - **Vendored packages** — RTL, Mempool and Sovran's LND-only Alby Hub
-  fork are built by this flake; BTCPay Server and NBXplorer come directly from
-  the flake's `nixpkgs` input
+  fork are built by this flake
 - **Secrets handled for you** — RPC passwords, macaroons and TLS certs are
   generated on the host at activation (`nix-bitcoin.generateSecrets`)
 - **No webserver opinions** — everything binds to loopback; clearnet is *your*
