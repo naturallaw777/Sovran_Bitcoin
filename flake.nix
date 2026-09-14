@@ -20,10 +20,7 @@
     # The single overlay consumed by the NixOS module (auto-applied on import)
     # and available as `overlays.default` for manual use.
     overlay = final: prev: {
-      sovran-bitcoin = prev.callPackage ./packages { } // {
-        # Use BTCPay Server and NBXplorer from the same nixpkgs input.
-        inherit (prev) nbxplorer btcpayserver;
-      };
+      sovran-bitcoin = prev.callPackage ./packages { };
     };
 
     # Full-stack regtest configuration used by the evaluation check below.
