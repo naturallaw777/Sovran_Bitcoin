@@ -1,7 +1,6 @@
 # Demo NixOS configuration — the full Sovran Bitcoin stack on regtest.
 #
-# Used by `checks` (evaluation) and runnable as a VM:
-#   nix run .#nixosConfigurations.demo.config.system.build.vm
+# Used by the full-stack evaluation check in `flake.nix`.
 #
 # regtest is used so the VM never touches mainnet. Flip
 # `services.bitcoind.regtest` to false for a mainnet box.
@@ -32,11 +31,8 @@
     dataDir = "/var/lib/bitcoind";
   };
 
-  # Demo VM ergonomics
   users.users.root.password = "demo";
   services.getty.autologinUser = lib.mkDefault "root";
-  # When running as a VM you can add e.g.:
-  #   virtualisation.memorySize = 4096;
 
   system.stateVersion = "26.05";
 }

@@ -13,7 +13,7 @@ repository — i.e. how the stack is configured and sandboxed.
 
 **Out of scope (report upstream):** vulnerabilities in the *upstream* applications themselves
 (bitcoind, lnd, electrs, BTCPay Server / NBXplorer, RTL, Mempool, Alby Hub). For those, follow the
-respective project's security process and keep your pinned `nixpkgs` / `nixpkgs-stable` revisions
+respective project's security process and keep your pinned `nixpkgs` revision
 current (see `flake.lock`).
 
 Supported configurations: NixOS hosts built from this flake's `nixosModules.default` with the

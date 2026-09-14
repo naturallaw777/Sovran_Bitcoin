@@ -5,7 +5,7 @@
 #   - LND only (no clightning), packages from nixpkgs
 #   - hard systemd units (nix-bitcoin defaultHardening)
 #   - secrets generated on the host, onion services via Tor
-#   - BTCPay/nbxplorer pinned to nixos-26.05 via the flake overlay
+#   - BTCPay/nbxplorer sourced from the flake nixpkgs input
 #
 # Consumed via:
 #   sovran-bitcoin.enable = true;            # base node (see ./preset.nix)
