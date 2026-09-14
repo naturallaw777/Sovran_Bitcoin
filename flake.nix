@@ -57,7 +57,6 @@
       sovran-bitcoin = {
         # The module auto-applies the flake overlay so vendored packages
         # (rtl, mempool, albyhub and nwc) resolve.
-        # BTCPay Server and NBXplorer come directly from nixpkgs.
         # Import `overlays.default` yourself instead if you prefer.
         nixpkgs.overlays = [ overlay ];
         imports = [ ./modules ];
