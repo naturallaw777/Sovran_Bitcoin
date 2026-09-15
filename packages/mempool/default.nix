@@ -112,7 +112,14 @@ rec {
         ln -s ${builtins.toFile "mempool-frontend-config" (builtins.toJSON config)} mempool-frontend-config.json
       ''}
 
-      npm run build
+      # Disable interactive Angular progress rendering in Nix builds.
+      # Repeated terminal-clearing output was observed during a stalled build.
+      substituteInPlace package.json \
+        --replace-fail \
+        'ng -- build --configuration production --localize' \
+        'ng -- build --configuration production --localize --progress=false'
+
+      CI=true TERM=dumb npm run build
 
       # Add assets that would otherwise be downloaded by sync-assets.js
       ${sync} ${frontendAssets}/ dist/mempool/browser/resources
