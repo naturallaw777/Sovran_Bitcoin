@@ -4,6 +4,20 @@ All notable changes to Sovran_Bitcoin are documented here.
 
 This project follows [Semantic Versioning](https://semver.org/).
 
+## [1.0.3] - 2026-10-01
+
+### Changed
+
+- Refreshed the locked `nixpkgs` revision from `44a91898` to `c59305ba`
+  (`nixos-unstable`).
+- Updated the Nixpkgs-provided Tor package from `0.4.9.12` to `0.4.9.13`.
+- No Sovran module option/default or vendored application version changes.
+
+### Upgrade notes
+
+- No configuration migration is expected from this repo update. The refreshed
+  Nixpkgs input may change transitive dependencies and trigger rebuilds.
+
 ## [1.0.2] - 2026-09-21
 
 ### Changed
@@ -46,6 +60,7 @@ This project follows [Semantic Versioning](https://semver.org/).
 
 - Initial tagged release.
 
+[1.0.3]: https://github.com/naturallaw777/Sovran_Bitcoin/compare/1.0.2...1.0.3
 [1.0.2]: https://github.com/naturallaw777/Sovran_Bitcoin/compare/1.0.1...1.0.2
 [1.0.1]: https://github.com/naturallaw777/Sovran_Bitcoin/compare/1.0.0...1.0.1
 [1.0.0]: https://github.com/naturallaw777/Sovran_Bitcoin/releases/tag/1.0.0
