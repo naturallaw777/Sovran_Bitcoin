@@ -7,8 +7,8 @@ packaged as a standalone flake so any NixOS user can run it.
 Think *"nix-bitcoin, but Sovran-opinionated"*:
 
 - **LND only** — no clightning, no decision fatigue
-- **Ready for Zeus and BitBanana** — scan-to-connect QR/URI over Tor:
-  REST for Zeus, gRPC for BitBanana
+- **Flexible mobile access** — full LND management in Zeus or BitBanana, or
+  optional NWC wallet connections with app-specific spending limits
 - **Tor-first** — proxied, enforced, with onion services for everything
 - **Hardened** — every service runs with nix-bitcoin's strict systemd sandboxing
 - **Vendored packages** — RTL, Mempool and Sovran's LND-only Alby Hub
@@ -72,7 +72,13 @@ bind the gRPC API to the LAN or clearnet.
 
 ## Connect from Zeus or BitBanana
 
-The default preset includes two scan-to-connect options for LND:
+Choose direct LND access for full node and channel management, or use Nostr
+Wallet Connect (NWC) for a separate wallet-only connection with tighter
+permissions and an optional spending cap. You can use either mode, or both.
+
+### Direct LND access
+
+The default preset includes two scan-to-connect options:
 
 | App | Command | Connection |
 | --- | --- | --- |
@@ -94,6 +100,10 @@ recognizes the `.onion` address and connects over Tor. The gRPC onion forwards
 to LND's loopback listener; the preset does not bind that API to the LAN or
 clearnet. See the [BitBanana connection guide](https://docs.bitbanana.app/setup/connect-a-lightning-node/).
 
+**Direct-access security:** these URIs contain LND's admin macaroon, which
+provides broad node control. Treat each QR/URI like a password; never post or
+share them.
+
 If configuring LND without the Sovran preset, enable the helpers and Tor
 endpoints with:
 
@@ -105,8 +115,32 @@ services.lnd.lndconnect = {
 };
 ```
 
-**Security:** generated QR codes and URIs contain the LND admin macaroon, which
-grants broad node control. Treat them like passwords; do not post or share them.
+### Optional NWC wallet access
+
+Enable the `nwc` feature to run Sovran's self-hosted Alby Hub wallet service
+(`lnurl = true` also enables it):
+
+```nix
+{
+  sovran-bitcoin.features.nwc = true;
+}
+```
+
+Create a separate connection for each app:
+
+```bash
+nwc-wallet create pocket-wallet pocket --limit-sats 5000
+```
+
+This creates an isolated wallet connection with a fixed, non-renewing send
+limit of 5,000 sats. Without `--limit-sats`, new connections are receive-only.
+The command prints a `pairing_uri` beginning with `nostr+walletconnect://`;
+copy that value into the NWC wallet-connection flow in [Zeus](https://zeusln.com/blog/new-release-zeus-v0-10-0/)
+or [BitBanana](https://docs.bitbanana.app/setup/connect-a-hosted-wallet/nostr-wallet-connect-uri/).
+
+NWC is wallet/payment access—not full node management. Use direct LND access
+above when you need channels, peers, and other node controls. NWC pairing URIs
+are credentials: keep them private, and use per-app permissions and limits.
 
 ## Adding services
 
@@ -184,7 +218,7 @@ Disable a piece of the base stack:
 
   | Subcommand | What it does |
   |---|---|
-  | `nwc-wallet create <name> <alias> [--qr]` | Create a wallet, print the Lightning Address and pairing URI (shown once). Pass `--qr` to also render a QR code in the terminal. |
+  | `nwc-wallet create <name> <alias> [--receive-only | --limit-sats SATS] [--qr]` | Create an isolated NWC connection. Receive-only is the default; `--limit-sats` sets a fixed send limit. The pairing URI is shown once. `--qr` prints a Lightning Address QR (when a domain is configured), not the pairing URI. |
   | `nwc-wallet list` | List all managed wallets (includes Lightning Address). |
   | `nwc-wallet lnurl <alias> [--qr]` | Show the Lightning Address, bech32 LNURL, and optionally a terminal QR code for receiving payments. |
   | `nwc-wallet lnurl <alias> --address-only` | Print only the Lightning Address (e.g. for piping). |
