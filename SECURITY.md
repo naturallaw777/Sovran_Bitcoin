@@ -77,7 +77,11 @@ These reflect the defaults and the remediations from the security audit
    rate limiting. The service uses a **full Alby Hub token** (Alby Hub's unlock tokens are binary
    `full`/`read`), so the unit must stay sandboxed and loopback-only — this is a known least-privilege
    limitation, not a regression.
-3. **`lndconnect`** — prefer `services.lnd.lndconnect.onion = true` (the preset default). If you set
+3. **`lndconnect` / `lndconnect-grpc`** — keep the REST and gRPC connection services on Tor
+   (`services.lnd.lndconnect.onion = true` and
+   `services.lnd.lndconnect.grpcOnion = true`, both preset defaults). The
+   generated URI contains the LND admin macaroon, a bearer credential with broad node control.
+   Treat the QR/URI as a secret; do not post it or store it in a public log. If you set
    `onion = false` for LAN Zeus, you **must** enable `networking.firewall` and allow the LND REST
    port; otherwise the build fails closed (the audit patch enforces this).
 4. **Firewall:** enable `networking.firewall` on any host that exposes a service beyond loopback.

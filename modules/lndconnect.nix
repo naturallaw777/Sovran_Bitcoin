@@ -1,13 +1,15 @@
 { config, lib, pkgs, ... }:
 
-# LND-only lndconnect wrapper. Restored to the fort-nix/nix-bitcoin contract
+# LND-only lndconnect wrappers. Restored to the fort-nix/nix-bitcoin contract
 # after the LND-only rewrite shipped a Zeus QR that Zeus cannot use:
 #   - unknown flags (--cert / --macaroon instead of --tlscertpath / --adminmacaroonpath)
 #   - onion hostname read from /var/lib/tor/onion/free/lnd/hostname (does not exist)
 #   - REST hidden service named "lnd", colliding with the LND P2P onion
 #   - TLS cert embedded in the URI (localhost CN + QR too dense to scan)
 #
-# Zeus needs: lndconnect://<lnd-rest-onion>:8080?macaroon=<admin>  (no cert over Tor)
+# Zeus uses REST:      lndconnect://<lnd-rest-onion>:8080?macaroon=<admin>
+# BitBanana uses gRPC: lndconnect://<lnd-grpc-onion>:10009?macaroon=<admin>
+# Tor connections omit the certificate; the macaroon remains the credential.
 
 with lib;
 let
@@ -52,8 +54,9 @@ in {
       type = types.bool;
       default = false;
       description = ''
-        Add a `lndconnect` binary to the system environment which prints
-        connection info for lnd clients (Zeus).
+        Add LND connection QR/URI commands to the system environment.
+        `lndconnect` prints the REST URI (e.g. for Zeus); when `grpcOnion` is
+        enabled, `lndconnect-grpc` prints a gRPC URI (e.g. for BitBanana).
         See: https://github.com/LN-Zap/lndconnect
 
         Usage:
@@ -72,6 +75,17 @@ in {
       description = ''
         Create an onion service for the lnd REST server,
         which is used by lndconnect / Zeus.
+      '';
+    };
+    grpcOnion = mkOption {
+      type = types.bool;
+      default = false;
+      description = ''
+        Create a Tor onion service for LND's gRPC listener and add a
+        `lndconnect-grpc` command. Use this for BitBanana and other gRPC
+        clients. The command prints a QR by default and accepts `--url` to
+        print the lndconnect URI instead. It uses the gRPC port and admin
+        macaroon; keep the resulting URI/QR private.
       '';
     };
   };
@@ -98,8 +112,8 @@ in {
         }
       ];
 
-      environment.systemPackages = [(
-        mkLndconnect {
+      environment.systemPackages = [
+        (mkLndconnect {
           name = "lndconnect";
           # Run as lnd user because the macaroon and cert are not group-readable
           shebang = "#!/usr/bin/env -S ${runAsUser} ${cfg.user} ${pkgs.bash}/bin/bash";
@@ -108,8 +122,16 @@ in {
           port = cfg.restPort;
           certPath = cfg.certPath;
           authSecretPath = "${cfg.networkDir}/admin.macaroon";
-        }
-      )];
+        })
+      ] ++ optional cfg.lndconnect.grpcOnion (mkLndconnect {
+        name = "lndconnect-grpc";
+        # Like the REST wrapper, run as lnd to read the admin macaroon.
+        shebang = "#!/usr/bin/env -S ${runAsUser} ${cfg.user} ${pkgs.bash}/bin/bash";
+        enableOnion = true;
+        onionService = "${cfg.user}/lnd-grpc";
+        port = cfg.rpcPort;
+        authSecretPath = "${cfg.networkDir}/admin.macaroon";
+      });
 
       # LAN / clearnet Zeus needs REST on all interfaces. Tor-only stays on
       # the existing restAddress (loopback) and is reached via lnd-rest.
@@ -129,6 +151,23 @@ in {
       nix-bitcoin.onionAddresses.access = {
         ${cfg.user} = [ "lnd-rest" ];
         ${operatorName} = [ "lnd-rest" ];
+      };
+    })
+
+    (mkIf cfg.lndconnect.grpcOnion {
+      services.tor = {
+        enable = true;
+        # Dedicated Tor endpoint; the default LND gRPC bind remains loopback-only.
+        relay.onionServices.lnd-grpc = nbLib.mkOnionService {
+          target.addr = nbLib.address cfg.rpcAddress;
+          target.port = cfg.rpcPort;
+          port = cfg.rpcPort;
+        };
+      };
+      nix-bitcoin.onionAddresses.access = {
+        # The wrapper runs as lnd and reads its own copied onion hostname.
+        ${cfg.user} = [ "lnd-grpc" ];
+        ${operatorName} = [ "lnd-grpc" ];
       };
     })
   ]);

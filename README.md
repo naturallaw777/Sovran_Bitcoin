@@ -58,9 +58,16 @@ That gives you, with zero further config:
 | `bitcoind`  | mainnet, txindex, Tor-proxied + enforced, onion P2P, bloom filters  |
 | `electrs`   | Electrum server (for Sparrow etc.), onion service                   |
 | `lnd`       | Lightning node, Tor-proxied, public P2P onion                       |
-| `lndconnect`| `lndconnect` command printing a Zeus-ready QR over the REST onion    |
+| `lndconnect` | `lndconnect` command printing a Zeus-ready QR over the REST onion    |
+| `lndconnect-grpc` | `lndconnect-grpc` command printing a BitBanana-ready QR over a separate gRPC onion |
 | secrets     | generated on first activation into `/etc/nix-bitcoin-secrets`       |
 | `nodeinfo`  | run `nodeinfo` as the operator for a full status report             |
+
+The default preset keeps the existing REST onion/QR (`lndconnect`) for Zeus and
+adds a separate gRPC onion/QR (`lndconnect-grpc`) for BitBanana. Both commands
+print a QR by default; pass `--url` to print the `lndconnect://` URI. The gRPC
+endpoint is Tor-only and remains backed by LND's loopback gRPC listener on
+`127.0.0.1:10009`.
 
 ## Adding services
 
@@ -130,7 +137,13 @@ Disable a piece of the base stack:
 
 - `bitcoin-cli`, `lncli` — as the operator user
 - `nodeinfo` — service/onion status report
-- `lndconnect` — QR / URI for Zeus & other LND connect apps
+- `lndconnect` — REST QR / URI for Zeus and other LND REST clients
+- `lndconnect-grpc` — gRPC QR / URI for BitBanana and other gRPC clients
+
+Run `lndconnect-grpc` to display the BitBanana QR, or `lndconnect-grpc --url`
+to print its URI. Scan or paste it into BitBanana. The URI carries the LND
+admin macaroon, so treat it as a secret.
+
 - `nwc-wallet` — manage NWC wallets from the CLI
   (Sovran's Alby Hub fork has **no web UI**; this CLI is the operator
   interface. Env is baked in when `nwc` is enabled.)

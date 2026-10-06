@@ -1,7 +1,8 @@
 # Example: a plain, opinionated Sovran Bitcoin node.
 #
 # bitcoind (txindex, Tor-proxied & enforced) + electrs + LND,
-# onion services, generated secrets, operator user, nodeinfo, lndconnect.
+# onion services, generated secrets, operator user, nodeinfo, and
+# REST/gRPC lndconnect QR commands.
 { config, pkgs, lib, ... }:
 
 {

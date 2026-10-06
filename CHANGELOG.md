@@ -4,6 +4,16 @@ All notable changes to Sovran_Bitcoin are documented here.
 
 This project follows [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+- Optional `services.lnd.lndconnect.grpcOnion` support, which publishes LND's
+  gRPC listener through a dedicated Tor onion service and installs
+  `lndconnect-grpc` for BitBanana-compatible QR/URI generation. The Sovran
+  preset enables it by default while retaining the existing REST `lndconnect`
+  command.
+
 ## [1.0.3] - 2026-10-01
 
 ### Changed

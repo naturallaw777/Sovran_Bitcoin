@@ -104,6 +104,13 @@
           inherit nixpkgs;
           inherit overlay;
         };
+
+        # REST and gRPC lndconnect helpers, including the gRPC onion mapping.
+        lndconnect = import ./tests/lndconnect.nix {
+          inherit system;
+          inherit nixpkgs;
+          inherit overlay;
+        };
       });
   };
 }

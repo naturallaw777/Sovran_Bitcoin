@@ -6,7 +6,8 @@
 #
 #   sovran-bitcoin.enable = true;
 #     → bitcoind + electrs + lnd, Tor proxy + enforcement, onion services,
-#       generated secrets, operator user, nodeinfo, lndconnect (Zeus over Tor)
+#       generated secrets, operator user, nodeinfo, REST lndconnect (Zeus),
+#       and gRPC lndconnect (BitBanana), both over Tor
 #
 #   sovran-bitcoin.features.<name> = true;
 #     → rtl, btcpayserver (+nbxplorer, LND backend), mempool, nwc (Alby Hub),
@@ -126,10 +127,11 @@ in {
       extraConfig = ''
         protocol.option-scid-alias=true
       '';
-      # Zeus & friends: `lndconnect` prints a QR pointing at the REST onion
+      # Keep the REST QR for Zeus, and offer gRPC over Tor for BitBanana.
       lndconnect = {
         enable = true;
         onion = true;
+        grpcOnion = mkDefault true;
       };
     };
     nix-bitcoin.onionServices.lnd.public = mkIf feat.lnd true;
