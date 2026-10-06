@@ -6,6 +6,8 @@ This project follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-10-06
+
 ### Added
 
 - Optional `services.lnd.lndconnect.grpcOnion` support, which publishes LND's
@@ -13,6 +15,11 @@ This project follows [Semantic Versioning](https://semver.org/).
   `lndconnect-grpc` for BitBanana-compatible QR/URI generation. The Sovran
   preset enables it by default while retaining the existing REST `lndconnect`
   command.
+
+### Changed
+
+- Expanded the README with direct Zeus and BitBanana LND setup, plus optional
+  NWC wallet connections and the fixed, non-renewing `--limit-sats` send budget.
 
 ## [1.0.3] - 2026-10-01
 
@@ -70,6 +77,8 @@ This project follows [Semantic Versioning](https://semver.org/).
 
 - Initial tagged release.
 
+[Unreleased]: https://github.com/naturallaw777/Sovran_Bitcoin/compare/1.1.0...HEAD
+[1.1.0]: https://github.com/naturallaw777/Sovran_Bitcoin/compare/1.0.3...1.1.0
 [1.0.3]: https://github.com/naturallaw777/Sovran_Bitcoin/compare/1.0.2...1.0.3
 [1.0.2]: https://github.com/naturallaw777/Sovran_Bitcoin/compare/1.0.1...1.0.2
 [1.0.1]: https://github.com/naturallaw777/Sovran_Bitcoin/compare/1.0.0...1.0.1
