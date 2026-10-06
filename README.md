@@ -7,6 +7,8 @@ packaged as a standalone flake so any NixOS user can run it.
 Think *"nix-bitcoin, but Sovran-opinionated"*:
 
 - **LND only** — no clightning, no decision fatigue
+- **Ready for Zeus and BitBanana** — scan-to-connect QR/URI over Tor:
+  REST for Zeus, gRPC for BitBanana
 - **Tor-first** — proxied, enforced, with onion services for everything
 - **Hardened** — every service runs with nix-bitcoin's strict systemd sandboxing
 - **Vendored packages** — RTL, Mempool and Sovran's LND-only Alby Hub
@@ -64,10 +66,47 @@ That gives you, with zero further config:
 | `nodeinfo`  | run `nodeinfo` as the operator for a full status report             |
 
 The default preset keeps the existing REST onion/QR (`lndconnect`) for Zeus and
-adds a separate gRPC onion/QR (`lndconnect-grpc`) for BitBanana. Both commands
-print a QR by default; pass `--url` to print the `lndconnect://` URI. The gRPC
-endpoint is Tor-only and remains backed by LND's loopback gRPC listener on
-`127.0.0.1:10009`.
+adds a separate gRPC onion/QR (`lndconnect-grpc`) for BitBanana. The gRPC onion
+forwards to LND's loopback listener (default `127.0.0.1:10009`); it does not
+bind the gRPC API to the LAN or clearnet.
+
+## Connect from Zeus or BitBanana
+
+The default preset includes two scan-to-connect options for LND:
+
+| App | Command | Connection |
+| --- | --- | --- |
+| Zeus | `lndconnect` | REST over the `lnd-rest` Tor onion (default port 8080) |
+| BitBanana | `lndconnect-grpc` | gRPC over the `lnd-grpc` Tor onion (default port 10009) |
+
+Run the matching command on the node to print its QR code. Add `--url` to print
+the `lndconnect://` URI instead:
+
+```bash
+lndconnect          # Zeus
+lndconnect-grpc     # BitBanana
+lndconnect --url
+lndconnect-grpc --url
+```
+
+Scan the QR or paste the URI into the app's node-connection screen. BitBanana
+recognizes the `.onion` address and connects over Tor. The gRPC onion forwards
+to LND's loopback listener; the preset does not bind that API to the LAN or
+clearnet. See the [BitBanana connection guide](https://docs.bitbanana.app/setup/connect-a-lightning-node/).
+
+If configuring LND without the Sovran preset, enable the helpers and Tor
+endpoints with:
+
+```nix
+services.lnd.lndconnect = {
+  enable = true;
+  onion = true;
+  grpcOnion = true;
+};
+```
+
+**Security:** generated QR codes and URIs contain the LND admin macaroon, which
+grants broad node control. Treat them like passwords; do not post or share them.
 
 ## Adding services
 
@@ -139,11 +178,6 @@ Disable a piece of the base stack:
 - `nodeinfo` — service/onion status report
 - `lndconnect` — REST QR / URI for Zeus and other LND REST clients
 - `lndconnect-grpc` — gRPC QR / URI for BitBanana and other gRPC clients
-
-Run `lndconnect-grpc` to display the BitBanana QR, or `lndconnect-grpc --url`
-to print its URI. Scan or paste it into BitBanana. The URI carries the LND
-admin macaroon, so treat it as a secret.
-
 - `nwc-wallet` — manage NWC wallets from the CLI
   (Sovran's Alby Hub fork has **no web UI**; this CLI is the operator
   interface. Env is baked in when `nwc` is enabled.)
