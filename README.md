@@ -117,7 +117,7 @@ services.lnd.lndconnect = {
 
 ### Optional NWC wallet access
 
-Enable the `nwc` feature to run Sovran's self-hosted Alby Hub wallet service
+Enable `nwc` to run Sovran's self-hosted Alby Hub wallet service
 (`lnurl = true` also enables it):
 
 ```nix
@@ -132,15 +132,14 @@ Create a separate connection for each app:
 nwc-wallet create pocket-wallet pocket --limit-sats 5000
 ```
 
-This creates an isolated wallet connection with a fixed, non-renewing send
-limit of 5,000 sats. Without `--limit-sats`, new connections are receive-only.
+This creates an isolated wallet connection holding 5,000 sats — all it can ever
+spend. Without `--limit-sats`, new connections are receive-only.
 The command prints a `pairing_uri` beginning with `nostr+walletconnect://`;
-copy that value into the NWC wallet-connection flow in [Zeus](https://zeusln.com/blog/new-release-zeus-v0-10-0/)
+copy it into the NWC wallet-connection flow in [Zeus](https://zeusln.com/blog/new-release-zeus-v0-10-0/)
 or [BitBanana](https://docs.bitbanana.app/setup/connect-a-hosted-wallet/nostr-wallet-connect-uri/).
 
-NWC is wallet/payment access—not full node management. Use direct LND access
-above when you need channels, peers, and other node controls. NWC pairing URIs
-are credentials: keep them private, and use per-app permissions and limits.
+NWC is wallet access, not node management — use direct LND access above for
+channels and peers. Pairing URIs are credentials: keep them private.
 
 ## Adding services
 
@@ -218,20 +217,20 @@ Disable a piece of the base stack:
 
   | Subcommand | What it does |
   |---|---|
-  | `nwc-wallet create <name> <alias> [--receive-only | --limit-sats SATS] [--qr]` | Create an isolated NWC connection. Receive-only is the default; `--limit-sats` sets a fixed send limit. The pairing URI is shown once. `--qr` prints a Lightning Address QR (when a domain is configured), not the pairing URI. |
+  | `nwc-wallet create <name> <alias> [--receive-only | --limit-sats SATS] [--qr]` | Create an isolated NWC connection. Receive-only by default; `--limit-sats` funds it with that many sats. The pairing URI is shown once. `--qr` prints a Lightning Address QR, not the pairing URI. |
   | `nwc-wallet list` | List all managed wallets (includes Lightning Address). |
   | `nwc-wallet lnurl <alias> [--qr]` | Show the Lightning Address, bech32 LNURL, and optionally a terminal QR code for receiving payments. |
   | `nwc-wallet lnurl <alias> --address-only` | Print only the Lightning Address (e.g. for piping). |
   | `nwc-wallet lnurl <alias> --lnurl-only` | Print only the bech32 LNURL string. |
-  | `nwc-wallet drain <wallet>` | Drain funds from a wallet. `<wallet>` may be its **name**, alias, Lightning Address or id, as printed by `nwc-wallet list`. |
-  | `nwc-wallet delete <wallet>` | Drain, then delete a wallet. `<wallet>` may be its **name**, alias, Lightning Address or id, as printed by `nwc-wallet list`. |
-  | `nwc-wallet rotate <wallet>` | Generate a new NWC connection secret (old one is revoked). `<wallet>` accepts the same identifiers as `delete`. |
+  | `nwc-wallet drain <wallet>` | Drain funds from a wallet. |
+  | `nwc-wallet delete <wallet>` | Drain, then delete a wallet. |
+  | `nwc-wallet rotate <wallet>` | Generate a new NWC connection secret (old one is revoked). |
   | `nwc-wallet address show <alias>` | Test if a Lightning Address endpoint is publicly reachable. |
   | `nwc-wallet health` | Check Alby Hub health. |
 
-  The `--qr` flag on `create` and `lnurl` renders a scannable QR code directly
-  in the terminal (requires `qrencode`, which is included when `lnurl` is
-  enabled via the NixOS module).
+  For `drain`, `delete` and `rotate`, `<wallet>` may be the name, alias,
+  Lightning Address or id from `nwc-wallet list`. `--qr` renders a QR in the
+  terminal (requires `qrencode`, included when `lnurl` is enabled).
 
 ## Flake outputs
 

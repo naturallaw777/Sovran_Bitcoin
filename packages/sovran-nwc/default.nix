@@ -13,7 +13,7 @@
 
 stdenvNoCC.mkDerivation {
   pname = "sovran-nwc";
-  version = "1.1.4";
+  version = "1.1.5";
 
   src = ./.;
 
@@ -26,6 +26,7 @@ stdenvNoCC.mkDerivation {
   checkPhase = ''
     runHook preCheck
     python3 tests/test_wallet_lookup.py
+    python3 tests/test_send_cap.py
     runHook postCheck
   '';
 

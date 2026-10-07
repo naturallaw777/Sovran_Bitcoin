@@ -510,11 +510,11 @@ class AlbyHubManager:
             if access_preset == "send_receive_limited"
             else RECEIVE_ONLY_SCOPES
         )
-        max_amount = (
-            spending_limit_sats
-            if access_preset == "send_receive_limited" and spending_limit_sats
-            else 0
-        )
+        # No send cap: an isolated wallet cannot spend more than it holds, so
+        # funding it *is* the limit. maxAmountSat would be a second, cumulative,
+        # never-renewing counter that later receipts do not raise — a funded
+        # wallet then gets refused with "not enough budget remaining".
+        max_amount = 0
 
         create_body: dict = {
             "name": name,
@@ -534,26 +534,6 @@ class AlbyHubManager:
         resp = self._authenticated_request("POST", "/api/apps", body=create_body)
         pairing_uri: str = resp.get("pairingUri") or resp.get("pairing_uri") or ""
         app_id = resp.get("id")
-
-        # Fetch full app details for accurate metadata
-        app_detail: dict | None = None
-        if app_id is not None:
-            try:
-                app_detail = self._authenticated_request(
-                    "GET", f"/api/v2/apps/{app_id}"
-                )
-            except AlbyHubError:
-                pass
-
-        if app_detail is None:
-            # Fallback: search recent apps for the one we just created
-            updated = self._all_managed_apps()
-            for a in updated:
-                if str(a.get("id", "")) == str(app_id):
-                    app_detail = a
-                    break
-
-        wallet_meta = self._app_to_wallet_meta(app_detail or resp, domain)
 
         # Initial internal transfer for limited wallets
         funding_result: dict = {"attempted": False, "success": False}
@@ -581,6 +561,27 @@ class AlbyHubManager:
                     "above, but initial funding failed. Save the NWC secret now. "
                     "Do not recreate this wallet."
                 )
+
+        # Fetch full app details for accurate metadata — after the transfer, so
+        # the reported balance is the funded amount rather than 0.
+        app_detail: dict | None = None
+        if app_id is not None:
+            try:
+                app_detail = self._authenticated_request(
+                    "GET", f"/api/v2/apps/{app_id}"
+                )
+            except AlbyHubError:
+                pass
+
+        if app_detail is None:
+            # Fallback: search recent apps for the one we just created
+            updated = self._all_managed_apps()
+            for a in updated:
+                if str(a.get("id", "")) == str(app_id):
+                    app_detail = a
+                    break
+
+        wallet_meta = self._app_to_wallet_meta(app_detail or resp, domain)
 
         # Audit log: wallet created
         self._audit(
