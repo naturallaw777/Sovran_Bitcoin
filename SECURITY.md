@@ -74,9 +74,9 @@ These reflect the defaults and the remediations from the security audit
 2. **LNURL (`sovran-lnurl`)** is the only internet-adjacent component. Apply the audit patch that
    adds `nbLib.defaultHardening` + loopback-only egress to the `nwc-lnurl` unit, and keep it behind
    a proxy that (a) enforces TLS, (b) sets a trustworthy `X-Forwarded-For`, and (c) adds its own
-   rate limiting. The service uses a **full Alby Hub token** (Alby Hub's unlock tokens are binary
-   `full`/`read`), so the unit must stay sandboxed and loopback-only — this is a known least-privilege
-   limitation, not a regression.
+   rate limiting. The service uses a least-privilege **invoice-only token** (`NWC_HUB_PERMISSION=invoice`)
+   issued by the native Sovran NWC daemon, which permits only alias discovery and minting incoming
+   BOLT11 invoices (wallet creation, deletion, drain, and transfer endpoints return `HTTP 403`).
 3. **`lndconnect` / `lndconnect-grpc`** — keep the REST and gRPC connection services on Tor
    (`services.lnd.lndconnect.onion = true` and
    `services.lnd.lndconnect.grpcOnion = true`, both preset defaults). The
@@ -99,8 +99,6 @@ These reflect the defaults and the remediations from the security audit
 
 ## 5. Known limitations
 
-- The LNURL service requires a full Alby Hub token (Alby Hub token model constraint); containment
-  relies on the systemd sandbox + loopback binding. Tracked as a least-privilege item.
 - LNURL rate limiting is per-process and in-memory; it is a best-effort abuse control, not a
   substitute for a fronting proxy's limits.
 - Upstream application CVEs are out of scope here; stay current with `flake.lock` pins.

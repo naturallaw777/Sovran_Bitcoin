@@ -82,6 +82,7 @@ let
     NWC_LNURL_BIND_HOST = lnurlCfg.address;
     NWC_LNURL_PORT = toString lnurlCfg.port;
     NWC_ALBY_HUB_API_BASE = "http://${albyhub.address}:${toString albyhub.port}";
+    NWC_HUB_PERMISSION = "invoice";
     NWC_LND_ADDRESS = "${lndCfg.rpcAddress}:${toString lndCfg.rpcPort}";
     NWC_LND_CERT_FILE = lndCfg.certPath;
     NWC_LND_MACAROON_FILE = "/run/lnd/albyhub.macaroon";

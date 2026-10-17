@@ -140,6 +140,7 @@ in {
       electrs = mkInfo "";
       btcpayserver = mkInfo "";
       rtl = mkInfo "";
+      albyhub = mkInfo "";
       mempool = mkInfo "";
       mempool-frontend = name: cfg: mkInfoLong {
         inherit name cfg;

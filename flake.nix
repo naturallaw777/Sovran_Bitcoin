@@ -111,6 +111,13 @@
           inherit nixpkgs;
           inherit overlay;
         };
+
+        # Nix-native Sovran NWC daemon, declarative wallets, and LNURL least-privilege token scope.
+        nwc = import ./tests/nwc.nix {
+          inherit system;
+          inherit nixpkgs;
+          inherit overlay;
+        };
       });
   };
 }

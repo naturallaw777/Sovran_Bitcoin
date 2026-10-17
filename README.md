@@ -126,15 +126,29 @@ Enable `nwc` to run Sovran's self-hosted Alby Hub wallet service
 }
 ```
 
-Create a separate connection for each app:
+Create a separate connection for each app from the CLI:
 
 ```bash
 nwc-wallet create pocket-wallet pocket --limit-sats 5000
 ```
 
+Or declare sub-wallets directly in your NixOS configuration (`services.sovran-nwc.wallets` or `services.albyhub.wallets`):
+
+```nix
+{
+  sovran-bitcoin.features.nwc = true;
+  services.sovran-nwc.wallets.pocket = {
+    alias = "pocket";
+    limitSats = 5000; # omit for receive-only
+  };
+}
+```
+
 This creates an isolated wallet connection holding 5,000 sats — all it can ever
-spend. Without `--limit-sats`, new connections are receive-only.
-The command prints a `pairing_uri` beginning with `nostr+walletconnect://`;
+spend. Without `--limit-sats` (or `limitSats`), new connections are receive-only.
+The CLI prints a `pairing_uri` beginning with `nostr+walletconnect://` (for
+declarative wallets, it is written with mode `0600` to
+`/var/lib/albyhub/wallets/<alias>.pairing-uri`);
 copy it into the NWC wallet-connection flow in [Zeus](https://zeusln.com/blog/new-release-zeus-v0-10-0/)
 or [BitBanana](https://docs.bitbanana.app/setup/connect-a-hosted-wallet/nostr-wallet-connect-uri/).
 

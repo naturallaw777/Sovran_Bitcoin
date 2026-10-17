@@ -1,34 +1,56 @@
-# Alby Hub — NWC (Nostr Wallet Connect) wallet server, LND-only.
+# Sovran NWC (`services.albyhub` / `services.sovran-nwc`) — Nix-native
+# Nostr Wallet Connect (NIP-47) wallet server for LND.
 #
-# Decoupled from Sovran_SystemsOS' `modules/nwc-wallets.nix`:
-#   - no dependency on the Sovran Hub web app or sovran_systemsOS options
-#   - relay configurable (`services.albyhub.relay`)
-#   - dataDir configurable
+# Powered by `pkgs.sovran-bitcoin.nwc` (`nwc-daemon`), a pure-stdlib Python
+# implementation with SQLite sub-wallet isolation, direct LND REST integration,
+# always-private route hints, and least-privilege token scopes (`full`,
+# `invoice`, `read`).
 #
-# The management API binds to 127.0.0.1 only. There is no web UI;
-# operators manage wallets with `nwc-wallet`.
+# Both `services.albyhub.*` and `services.sovran-nwc.*` are supported via a
+# NixOS option alias for seamless backwards compatibility.
 { config, lib, pkgs, ... }:
 
 with lib;
 let
+  walletSubmodule = { name, ... }: {
+    options = {
+      alias = mkOption {
+        type = types.str;
+        default = name;
+        description = ''
+          Lightning Address alias (`<alias>@<domain>`) for this sub-wallet.
+        '';
+      };
+
+      limitSats = mkOption {
+        type = types.nullOr types.ints.positive;
+        default = null;
+        description = ''
+          Initial funding and spending balance in satoshis.
+          When `null` (default), the sub-wallet is created as receive-only.
+        '';
+      };
+    };
+  };
+
   options.services.albyhub = {
     enable = mkOption {
       type = types.bool;
       default = false;
       description = ''
-        Enable Alby Hub, a self-hosted NWC wallet server (Sovran's LND-only fork:
-        no built-in frontend, loopback bind, always-private route hints).
-        Wallets connect over Nostr Wallet Connect. There is no web UI; manage
-        wallets with `nwc-wallet`. The local API listens on
-        {option}`services.albyhub.address`:{option}`services.albyhub.port`.
+        Enable the Sovran NWC wallet server (`nwc-daemon`, LND-only:
+        no web UI, loopback bind, always-private route hints, SQLite sub-wallet
+        ledger). Wallets connect over Nostr Wallet Connect (NIP-47). Manage
+        wallets imperatively with `nwc-wallet` or declaratively via
+        {option}`services.albyhub.wallets` / {option}`services.sovran-nwc.wallets`.
       '';
     };
 
     package = mkOption {
       type = types.package;
-      default = pkgs.sovran-bitcoin.albyhub;
-      defaultText = "pkgs.sovran-bitcoin.albyhub";
-      description = "The package providing Alby Hub.";
+      default = pkgs.sovran-bitcoin.nwc;
+      defaultText = "pkgs.sovran-bitcoin.nwc";
+      description = "The package providing the Sovran NWC daemon (`nwc-daemon`).";
     };
 
     address = mkOption {
@@ -46,38 +68,62 @@ let
     dataDir = mkOption {
       type = types.path;
       default = "/var/lib/albyhub";
-      description = "Alby Hub data directory (hub database + auto-unlock password).";
+      description = "Sovran NWC data directory (SQLite ledger + auto-unlock password).";
     };
 
     relay = mkOption {
       type = types.str;
-        default = "wss://relay.getalby.com,wss://relay2.getalby.com";
+      default = "wss://relay.getalby.com,wss://relay2.getalby.com";
       description = ''
         Comma-separated Nostr relay(s) used for NWC communication.
-        Point this at a self-hosted relay for a fully sovereign setup.
+        Point this at a self-hosted or `.onion` relay for a fully sovereign setup.
+      '';
+    };
+
+    wallets = mkOption {
+      type = types.attrsOf (types.submodule walletSubmodule);
+      default = {};
+      example = literalExpression ''
+        {
+          pocket = {
+            alias = "pocket";
+            limitSats = 5000;
+          };
+          tips = {
+            alias = "tips";
+          };
+        }
+      '';
+      description = ''
+        Declarative NWC sub-wallets provisioned idempotently when the service starts.
+        For each newly created wallet, its `nostr+walletconnect://` pairing URI is
+        written with mode `0600` to `<dataDir>/wallets/<alias>.pairing-uri`.
       '';
     };
 
     user = mkOption {
       type = types.str;
       default = "albyhub";
-      description = "The user as which to run Alby Hub.";
+      description = "The user as which to run the NWC daemon.";
     };
 
     group = mkOption {
       type = types.str;
       default = cfg.user;
-      description = "The group as which to run Alby Hub.";
+      description = "The group as which to run the NWC daemon.";
     };
   };
 
   cfg = config.services.albyhub;
+  nbLib = config.nix-bitcoin.lib;
 
   lndRpcAddress = config.services.lnd.rpcAddress;
   lndRpcPort = config.services.lnd.rpcPort;
+  lndRestAddress = config.services.lnd.restAddress;
+  lndRestPort = config.services.lnd.restPort;
   lndCertPath = config.services.lnd.certPath;
 
-  albyhubWrapper = pkgs.writeShellScript "albyhub-wrapper" ''
+  albyhubWrapper = pkgs.writeShellScript "nwc-daemon-wrapper" ''
     set -euo pipefail
     password_file="${cfg.dataDir}/unlock-password"
     if [ ! -s "$password_file" ]; then
@@ -85,13 +131,10 @@ let
       ${pkgs.openssl}/bin/openssl rand -hex 32 > "$password_file"
     fi
     export AUTO_UNLOCK_PASSWORD="$(cat "$password_file")"
-    exec ${lib.getExe cfg.package}
+    exec ${cfg.package}/bin/nwc-daemon
   '';
 
   # ── LNURL domain env for the CLI wrapper ────────────────────────
-  # When the LNURL service is enabled, bake the Lightning Address domain
-  # into the nwc-wallet wrapper so the CLI can construct addresses and
-  # QR codes without requiring the caller to set env vars manually.
   lnurlCfg = config.services.sovran-lnurl or {};
   lnurlEnabled = (lnurlCfg.enable or false);
   lnurlDomainExport =
@@ -102,42 +145,68 @@ let
     else
       "# LNURL domain not configured at build time";
 
-  # CLI wallet manager with the right env baked in.
-  # Note: needs root/operator rights to read the unlock password and macaroon.
+  # CLI wallet manager with the right env baked in (`full` admin permission).
   wrappedNwcWallet = lib.hiPrio (pkgs.writeShellScriptBin "nwc-wallet" ''
     export NWC_ALBY_HUB_API_BASE='http://${cfg.address}:${toString cfg.port}'
     export NWC_LND_ADDRESS='${lndRpcAddress}:${toString lndRpcPort}'
+    export NWC_LND_REST_ADDRESS='${lndRestAddress}:${toString lndRestPort}'
     export NWC_LND_CERT_FILE='${lndCertPath}'
     export NWC_LND_MACAROON_FILE='/run/lnd/albyhub.macaroon'
     export NWC_UNLOCK_PASSWORD_FILE='${cfg.dataDir}/unlock-password'
+    export NWC_HUB_PERMISSION='full'
     export NWC_RELAY='${cfg.relay}'
     ${lnurlDomainExport}
-    exec ${pkgs.sovran-bitcoin.nwc}/bin/nwc-wallet "$@"
+    exec ${cfg.package}/bin/nwc-wallet "$@"
   '');
+
+  # Declarative wallet provisioning script (runs idempotently in ExecStartPost).
+  provisionWalletsScript = pkgs.writeShellScript "nwc-provision-wallets" ''
+    set -euo pipefail
+    mkdir -p "${cfg.dataDir}/wallets"
+    chmod 0700 "${cfg.dataDir}/wallets"
+    ${concatStringsSep "\n" (mapAttrsToList (name: w:
+      let
+        modeFlag =
+          if w.limitSats != null
+          then "--limit-sats ${toString w.limitSats}"
+          else "--receive-only";
+      in ''
+        if ! ${wrappedNwcWallet}/bin/nwc-wallet list | ${pkgs.jq}/bin/jq -e --arg alias ${escapeShellArg w.alias} '.wallets[] | select(.alias == $alias)' >/dev/null 2>&1; then
+          umask 077
+          out="$(${wrappedNwcWallet}/bin/nwc-wallet create ${escapeShellArg name} ${escapeShellArg w.alias} ${modeFlag})"
+          printf '%s\n' "$out" | ${pkgs.jq}/bin/jq -r '.pairing_uri' > "${cfg.dataDir}/wallets/${w.alias}.pairing-uri"
+        fi
+      ''
+    ) cfg.wallets)}
+  '';
 in {
+  imports = [
+    (mkAliasOptionModule [ "services" "sovran-nwc" ] [ "services" "albyhub" ])
+  ];
+
   inherit options;
 
   config = mkIf cfg.enable {
     assertions = [
       {
         assertion = config.services.lnd.enable;
-        message = "Alby Hub (NWC) requires services.lnd.enable = true.";
+        message = "Sovran NWC requires services.lnd.enable = true.";
       }
       {
         assertion = !(lib.attrByPath [ "nix-bitcoin" "netns-isolation" "enable" ] false config);
-        message = "Alby Hub (NWC) requires nix-bitcoin.netns-isolation.enable = false.";
+        message = "Sovran NWC requires nix-bitcoin.netns-isolation.enable = false.";
       }
       {
         assertion = cfg.port != config.services.lnd.restPort;
-        message = "Alby Hub and LND REST must use different ports.";
+        message = "Sovran NWC and LND REST must use different ports.";
       }
       {
         assertion = cfg.port != 8181;
-        message = "Alby Hub and the LNURL service must use different ports.";
+        message = "Sovran NWC and the LNURL service must use different ports.";
       }
       {
         assertion = !(lib.elem cfg.port config.networking.firewall.allowedTCPPorts);
-        message = "Alby Hub management port must not be opened on the public TCP firewall.";
+        message = "Sovran NWC management port must not be opened on the public TCP firewall.";
       }
     ];
 
@@ -163,15 +232,11 @@ in {
         ''{"entity":"offchain","action":"write"}''
         ''{"entity":"invoices","action":"read"}''
         ''{"entity":"invoices","action":"write"}''
-        ''{"entity":"onchain","action":"read"}''
-        ''{"entity":"address","action":"read"}''
-        ''{"entity":"message","action":"read"}''
-        ''{"entity":"message","action":"write"}''
       ];
     };
 
     systemd.services.albyhub = {
-      description = "Alby Hub — NWC wallet server";
+      description = "Sovran NWC — Nostr Wallet Connect server for LND";
       wantedBy = [ "multi-user.target" ];
       after = [ "network.target" "lnd.service" ];
       requires = [ "lnd.service" ];
@@ -182,24 +247,22 @@ in {
         DATABASE_URI = "${cfg.dataDir}/nwc.db";
         HOST = cfg.address;
         PORT = toString cfg.port;
-        LN_BACKEND_TYPE = "LND";
-        ENABLE_ADVANCED_SETUP = "false";
         LND_ADDRESS = "${lndRpcAddress}:${toString lndRpcPort}";
+        LND_REST_ADDRESS = "${lndRestAddress}:${toString lndRestPort}";
         LND_CERT_FILE = lndCertPath;
         LND_MACAROON_FILE = "/run/lnd/albyhub.macaroon";
         RELAY = cfg.relay;
-        AUTO_LINK_ALBY_ACCOUNT = "false";
-        SEND_EVENTS_TO_ALBY = "false";
-        LOG_TO_FILE = "false";
-        HIDE_UPDATE_BANNER = "true";
+      } // optionalAttrs config.services.tor.client.enable {
+        NWC_TOR_SOCKS_PROXY = config.nix-bitcoin.torClientAddressWithPort;
       };
 
-      serviceConfig = {
+      serviceConfig = nbLib.defaultHardening // {
         Type = "simple";
         User = cfg.user;
         Group = cfg.group;
         WorkingDirectory = cfg.dataDir;
         ExecStart = albyhubWrapper;
+        ExecStartPost = optional (cfg.wallets != {}) provisionWalletsScript;
         Restart = "on-failure";
         RestartSec = "10s";
         UMask = "0077";

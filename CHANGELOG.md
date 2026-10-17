@@ -6,6 +6,39 @@ This project follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.1.1] - 2026-10-18
+
+### Changed
+
+- Refreshed the locked `nixpkgs` revision from `c59305ba` to `55bfb4d7`
+  (`nixos-unstable`), updating Nixpkgs-provided stack components:
+  - `lnd`: `0.21.3-beta` → `0.21.4-beta`
+  - `lndinit`: `0.1.22-beta` → `0.1.38-beta`
+  - `electrs`: `0.11.0` → `0.12.0`
+  - `btcpayserver`: `2.4.2` → `2.4.5`
+  - `nbxplorer`: `2.6.10` → `2.6.17`
+  - `tor`: `0.4.9.13` → `0.4.9.14`
+- Updated the vendored Ride The Lightning (`rtl`) package from `0.15.12` to
+  `0.15.13` and dropped the removed `boltzMacaroonPath` / `boltzServerUrl`
+  fields from the generated `RTL-Config.json`.
+- Replaced the external Go Alby Hub fork (`packages/albyhub`) with a Nix-native,
+  pure-stdlib Python NWC wallet daemon (`nwc-daemon` in `packages/sovran-nwc`
+  `2.0.0`):
+  - Implements NIP-47 (`get_info`, `get_balance`, `make_invoice`,
+    `lookup_invoice`, `list_transactions`, `pay_invoice`, `notifications`),
+    BIP-340 Schnorr, NIP-04, NIP-44 v2, and RFC 6455 WebSocket relay
+    connectivity (including `.onion` relays over Tor SOCKS5) with zero external
+    Go/npm/pip dependencies.
+  - Connects directly to LND's local REST API (`https://127.0.0.1:8080`) using a
+    scoped macaroon (`info:read`, `offchain:read/write`, `invoices:read/write`)
+    and always requests private route hints (`private = true`).
+  - Enforces a least-privilege `invoice` token scope (`NWC_HUB_PERMISSION=invoice`)
+    for `nwc-lnurl`, resolving the known security limitation where the public
+    LNURL service previously required a full admin token.
+  - Applies `nix-bitcoin` `defaultHardening` systemd sandboxing to the NWC
+    service and adds declarative sub-wallet provisioning via
+    `services.sovran-nwc.wallets` / `services.albyhub.wallets`.
+
 ### Fixed
 
 - NWC wallets no longer refuse payments they can afford. Alby Hub gates a send
@@ -123,7 +156,8 @@ This project follows [Semantic Versioning](https://semver.org/).
 
 - Initial tagged release.
 
-[Unreleased]: https://github.com/naturallaw777/Sovran_Bitcoin/compare/1.1.0...HEAD
+[Unreleased]: https://github.com/naturallaw777/Sovran_Bitcoin/compare/1.1.1...HEAD
+[1.1.1]: https://github.com/naturallaw777/Sovran_Bitcoin/compare/1.1.0...1.1.1
 [1.1.0]: https://github.com/naturallaw777/Sovran_Bitcoin/compare/1.0.3...1.1.0
 [1.0.3]: https://github.com/naturallaw777/Sovran_Bitcoin/compare/1.0.2...1.0.3
 [1.0.2]: https://github.com/naturallaw777/Sovran_Bitcoin/compare/1.0.1...1.0.2

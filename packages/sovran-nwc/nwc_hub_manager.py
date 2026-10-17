@@ -41,6 +41,7 @@ DEFAULT_MACAROON_FILE = os.environ.get(
 DEFAULT_LND_ADDRESS = os.environ.get("NWC_LND_ADDRESS", "127.0.0.1:10009")
 DEFAULT_LND_CERT_FILE = os.environ.get("NWC_LND_CERT_FILE", "/var/lib/lnd/tls.cert")
 DEFAULT_LND_SOCKET = "/run/lnd/lnd.socket"
+DEFAULT_HUB_PERMISSION = os.environ.get("NWC_HUB_PERMISSION", "full")
 
 LNURL_DESCRIPTION_DEFAULT = "Pay via Lightning"
 NWC_MIN_SENDABLE_MSAT = 1000
@@ -98,12 +99,14 @@ class AlbyHubManager:
         macaroon_file: str = DEFAULT_MACAROON_FILE,
         lnd_address: str = DEFAULT_LND_ADDRESS,
         lnd_cert_file: str = DEFAULT_LND_CERT_FILE,
+        permission: str = DEFAULT_HUB_PERMISSION,
     ) -> None:
         self.api_base = api_base.rstrip("/")
         self.unlock_password_file = unlock_password_file
         self.macaroon_file = macaroon_file
         self.lnd_address = lnd_address
         self.lnd_cert_file = lnd_cert_file
+        self.permission = permission
         self._lock = threading.Lock()
         self._token: str | None = None
 
@@ -267,12 +270,11 @@ class AlbyHubManager:
             raise
 
     def _obtain_token(self, password: str) -> str:
-        # NOTE (security): Alby Hub unlock tokens are binary ("full" | "read"),
-        # so a receive-only service still requires a *full* token to mint
-        # invoices (POST /api/invoices with toAppId). This credential grants
-        # full hub admin over every managed wallet, so any caller of this
-        # manager (e.g. the nwc-lnurl unit) MUST stay loopback-only and run
-        # under the strict systemd sandbox (see modules/lnurl.nix).
+        # Sovran's native NWC daemon supports least-privilege token scopes:
+        #   - "full"    for the operator CLI (`nwc-wallet`)
+        #   - "invoice" for the public-facing `nwc-lnurl` service (can only
+        #               resolve aliases and mint incoming BOLT11 invoices)
+        #   - "read"    for read-only inspection
         info = self._request("GET", "/api/info", timeout=10)
         if info.get("running"):
             resp = self._request(
@@ -280,7 +282,7 @@ class AlbyHubManager:
                 "/api/unlock",
                 body={
                     "unlockPassword": password,
-                    "permission": "full",
+                    "permission": self.permission,
                 },
                 timeout=30,
             )
@@ -288,7 +290,10 @@ class AlbyHubManager:
             resp = self._request(
                 "POST",
                 "/api/start",
-                body={"unlockPassword": password},
+                body={
+                    "unlockPassword": password,
+                    "permission": self.permission,
+                },
                 timeout=30,
             )
         token = (

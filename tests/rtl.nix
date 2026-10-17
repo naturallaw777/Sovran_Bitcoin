@@ -61,6 +61,8 @@ assert lib.assertMsg (lib.hasPrefix "https://127.0.0.1:" node.settings.lnServerU
   "lnServerUrl must target loopback LND REST, not 0.0.0.0";
 assert lib.assertMsg (node.authentication.macaroonPath == "/var/lib/rtl/macaroons")
   "macaroonPath must be the copied-macaroon directory";
+assert lib.assertMsg (!(node.authentication ? boltzMacaroonPath) && !(node.settings ? boltzServerUrl))
+  "RTL v0.15.13 removed Boltz settings";
 pkgs.runCommand "sovran-bitcoin-rtl" {} ''
   echo ok > $out
 ''

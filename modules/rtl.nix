@@ -120,7 +120,6 @@ let
       authentication = {
         macaroonPath = "${cfg.dataDir}/macaroons";
         swapMacaroonPath = if cfg.nodes.lnd.loop then "${cfg.dataDir}/loop-macaroons" else "";
-        boltzMacaroonPath = "";
       };
       settings = {
         userPersona = "OPERATOR";
@@ -130,7 +129,6 @@ let
         logLevel = "INFO";
         lnServerUrl = "https://${nbLib.addressWithPort lnd.restAddress lnd.restPort}";
         swapServerUrl = if cfg.nodes.lnd.loop then "https://127.0.0.1:8081" else "";
-        boltzServerUrl = "";
         fiatConversion = cfg.extraCurrency != null;
         unannouncedChannels = true;
       } // optionalAttrs (cfg.extraCurrency != null) {

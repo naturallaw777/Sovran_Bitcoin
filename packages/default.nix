@@ -13,6 +13,7 @@
 let
   fetchNodeModules = callPackage ./build-support/fetch-node-modules.nix { };
   mempool = callPackage ./mempool { inherit fetchNodeModules; };
+  nwc = callPackage ./sovran-nwc { };
 in
 {
   inherit fetchNodeModules;
@@ -24,7 +25,9 @@ in
     mempool-frontend
     mempool-nginx-conf;
 
-  albyhub = callPackage ./albyhub { };
+  inherit nwc;
 
-  nwc = callPackage ./sovran-nwc { };
+  # Backwards-compatible package alias: `sovran-nwc` now provides the native
+  # NWC wallet server (`nwc-daemon` / `albyhub`), `nwc-lnurl`, and `nwc-wallet`.
+  albyhub = nwc;
 }
