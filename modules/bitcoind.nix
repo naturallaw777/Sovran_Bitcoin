@@ -336,7 +336,7 @@ let
     ${concatMapStrings (user: ''
         ${optionalString (!user.passwordHMACFromFile) "rpcauth=${user.name}:${user.passwordHMAC}"}
         ${optionalString (user.rpcwhitelist != [])
-          "rpcwhitelist=${user.name}:${lib.strings.concatStringsSep "," user.rpcwhitelist}"}
+          "rpcwhitelist=${user.name}:${lib.strings.concatStringsSep "," (lib.unique user.rpcwhitelist)}"}
       '') (builtins.attrValues cfg.rpc.users)
     }
     ${lib.concatMapStrings (rpcallowip: "rpcallowip=${rpcallowip}\n") cfg.rpc.allowip}

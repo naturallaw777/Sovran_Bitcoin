@@ -209,33 +209,25 @@ in {
         rpc.users.btcpayserver = {
           name = "btcpayserver";
           passwordHMACFromFile = true;
-          rpcwhitelist = [
-            "getblockchaininfo"
-            "getblock"
-            "getblockhash"
-            "getblockheader"
-            "getblockstats"
+          rpcwhitelist = cfg.bitcoind.rpc.users.public.rpcwhitelist ++ [
+            "setban"
+            "generatetoaddress"
+            "getrpcinfo"
             "gettransaction"
-            "getrawtransaction"
-            "sendrawtransaction"
-            "getblockcount"
-            "getbestblockhash"
-            "getnetworkinfo"
-            "getpeerinfo"
-            "estimatesmartfee"
-            "getmempoolinfo"
-            "getmempoolentry"
-            "getrawmempool"
-            "gettxout"
-            "scantxoutset"
-            "importmulti"
-            "listunspent"
             "getwalletinfo"
+            "getnewaddress"
+            "listunspent"
             "listtransactions"
             "listreceivedbyaddress"
-            "getnewaddress"
-            "uptime"
-            "getrpcinfo"
+            "importmulti"
+            "importdescriptors"
+            "importaddress"
+            "importprivkey"
+            "importpubkey"
+            "rescanblockchain"
+            "createwallet"
+            "loadwallet"
+            "signrawtransactionwithwallet"
           ];
         };
       };

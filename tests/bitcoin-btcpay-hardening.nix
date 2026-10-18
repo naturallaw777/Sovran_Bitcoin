@@ -137,8 +137,16 @@ assert lib.assertMsg
     && config.services.bitcoind.rest
     && lib.hasInfix "rest=1" bitcoindConfig
     && lib.elem "submitpackage" config.services.bitcoind.rpc.users.public.rpcwhitelist
+    && lib.elem "validateaddress" config.services.bitcoind.rpc.users.btcpayserver.rpcwhitelist
+    && lib.elem "getindexinfo" config.services.bitcoind.rpc.users.btcpayserver.rpcwhitelist
+    && lib.elem "testmempoolaccept" config.services.bitcoind.rpc.users.btcpayserver.rpcwhitelist
+    && lib.elem "signrawtransactionwithkey" config.services.bitcoind.rpc.users.btcpayserver.rpcwhitelist
+    && lib.elem "signrawtransactionwithwallet" config.services.bitcoind.rpc.users.btcpayserver.rpcwhitelist
+    && lib.elem "getblockfrompeer" config.services.bitcoind.rpc.users.btcpayserver.rpcwhitelist
+    && lib.elem "generatetoaddress" config.services.bitcoind.rpc.users.btcpayserver.rpcwhitelist
+    && lib.elem "createwallet" config.services.bitcoind.rpc.users.btcpayserver.rpcwhitelist
     && lib.hasInfix "prefix_extractor=rocksdb" electrsPreStart)
-  "electrs 0.12.0 must not pass --daemon-p2p-addr, must enable bitcoind rest=1 and submitpackage RPC, and must clean up pre-0.12.0 RocksDB format";
+  "electrs 0.12.0 and btcpayserver RPC whitelist must include all required methods";
 pkgs.runCommand "bitcoin-btcpay-hardening" {} ''
   mkdir -p /build/secrets /build/nbxplorer
 

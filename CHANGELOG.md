@@ -13,6 +13,7 @@ This project follows [Semantic Versioning](https://semver.org/).
   - Added `services.bitcoind.rest` (`rest=1` in `bitcoin.conf`) and enabled it automatically when `services.electrs.enable = true`, as required by `electrs 0.12.0` (`bindex`) for `/rest/blockhashbyheight/`, `/rest/headers/`, `/rest/block/`, `/rest/spenttxouts/`, and `/rest/blockpart/`.
   - Added `submitpackage` to `modules/bitcoind-rpc-public-whitelist.nix` for `electrs 0.12.0` package broadcast support.
   - Added a `preStart` check in `modules/electrs.nix` to detect and remove pre-`0.12.0` (`FixedPrefix.8` / format v0) RocksDB directories so upgrades from `electrs 0.10.x`/`0.11.x` automatically reindex instead of panicking on `Unsupported DB format (0 < 1)`.
+- Expanded `services.bitcoind.rpc.users.btcpayserver.rpcwhitelist` in `modules/btcpayserver.nix` to inherit `public.rpcwhitelist` (`validateaddress`, `testmempoolaccept`, `signrawtransactionwithkey`, `getblockfrompeer`, `getindexinfo`, etc.) plus NBXplorer/wallet methods (`generatetoaddress`, `signrawtransactionwithwallet`, `createwallet`, `loadwallet`, `importdescriptors`, etc.), resolving `bitcoind` RPC whitelist warnings during `nbxplorer` `ScanRPCCapabilitiesAsync` / `SupportTxIndex` / `EnsureWalletCreated` startup checks.
 
 ## [1.1.1] - 2026-10-18
 
