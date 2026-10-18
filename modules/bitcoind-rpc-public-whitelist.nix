@@ -55,6 +55,7 @@
   "joinpsbts"
   "sendrawtransaction"
   "signrawtransactionwithkey"
+  "submitpackage"
   "testmempoolaccept"
   "utxoupdatepsbt"
   # Util

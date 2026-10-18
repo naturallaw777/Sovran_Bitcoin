@@ -6,6 +6,14 @@ This project follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- Fixed `electrs.service` startup failure on `electrs 0.12.0` (`Error: An unknown argument '--daemon-p2p-addr=127.0.0.1:8335' was specified.`):
+  - Removed the obsolete `--daemon-p2p-addr` CLI flag from `modules/electrs.nix` (dropped upstream in `electrs 0.12.0` when block indexing moved to `bindex`).
+  - Added `services.bitcoind.rest` (`rest=1` in `bitcoin.conf`) and enabled it automatically when `services.electrs.enable = true`, as required by `electrs 0.12.0` (`bindex`) for `/rest/blockhashbyheight/`, `/rest/headers/`, `/rest/block/`, `/rest/spenttxouts/`, and `/rest/blockpart/`.
+  - Added `submitpackage` to `modules/bitcoind-rpc-public-whitelist.nix` for `electrs 0.12.0` package broadcast support.
+  - Added a `preStart` check in `modules/electrs.nix` to detect and remove pre-`0.12.0` (`FixedPrefix.8` / format v0) RocksDB directories so upgrades from `electrs 0.10.x`/`0.11.x` automatically reindex instead of panicking on `Unsupported DB format (0 < 1)`.
+
 ## [1.1.1] - 2026-10-18
 
 ### Changed

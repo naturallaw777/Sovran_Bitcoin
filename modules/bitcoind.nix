@@ -219,6 +219,11 @@ let
         default = false;
         description = "Enable the transaction index.";
       };
+      rest = mkOption {
+        type = types.bool;
+        default = false;
+        description = "Enable the public REST interface.";
+      };
       zmqpubrawblock = mkOption {
         type = types.nullOr types.str;
         default = null;
@@ -322,6 +327,7 @@ let
     ${lib.concatMapStrings (node: "addnode=${node}\n") cfg.addnodes}
 
     # RPC server options
+    ${optionalString cfg.rest "rest=1"}
     rpcbind=${cfg.rpc.address}
     rpcport=${toString cfg.rpc.port}
     rpcconnect=${cfg.rpc.address}

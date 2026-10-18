@@ -42,10 +42,12 @@ let
 
         services.btcpayserver.enable = true;
         services.btcpayserver.lightningBackend = "lnd";
+        services.electrs.enable = true;
         services.nbxplorer.dataDir = "/build/nbxplorer";
         services.btcpayserver.dataDir = "/build/btcpayserver";
         services.lnd.dataDir = "/build/lnd";
         services.bitcoind.dataDir = "/build/bitcoind";
+        services.electrs.dataDir = "/build/electrs";
       }
     ];
   }).config;
@@ -54,12 +56,16 @@ let
   bitcoindPreStart = config.systemd.services.bitcoind.preStart;
   btcpayExecStart = config.systemd.services.btcpayserver.serviceConfig.ExecStart;
   btcpayWorkingDir = config.systemd.services.btcpayserver.serviceConfig.WorkingDirectory;
+  electrsExecStart = config.systemd.services.electrs.serviceConfig.ExecStart;
+  electrsPreStart = config.systemd.services.electrs.preStart;
 
   nbxplorerConfigPath = extractAfter "install -m 600" nbxplorerPreStart;
   btcpayConfigPath = extractFlagValue "--conf" btcpayExecStart;
+  bitcoindConfigPath = extractAfter "cat" bitcoindPreStart;
 
   nbxplorerConfig = builtins.readFile nbxplorerConfigPath;
   btcpayConfig = builtins.readFile btcpayConfigPath;
+  bitcoindConfig = builtins.readFile bitcoindConfigPath;
 in
 assert lib.assertMsg
   (config.users.users.${config.services.btcpayserver.user}.home == config.services.btcpayserver.dataDir)
@@ -125,6 +131,14 @@ assert lib.assertMsg
     && lib.hasInfix "Bitcoin RPC HMAC file has invalid format" bitcoindPreStart
     && lib.hasInfix ''hmacPayload="$(readValidatedRpcHmac '/build/secrets/bitcoin-HMAC-btcpayserver')" || exit 1'' bitcoindPreStart)
   "bitcoind preStart must validate missing, unreadable, empty, and malformed HMAC files";
+assert lib.assertMsg
+  (!lib.hasInfix "--daemon-p2p-addr" electrsExecStart
+    && lib.hasInfix "--daemon-rpc-addr=127.0.0.1:8332" electrsExecStart
+    && config.services.bitcoind.rest
+    && lib.hasInfix "rest=1" bitcoindConfig
+    && lib.elem "submitpackage" config.services.bitcoind.rpc.users.public.rpcwhitelist
+    && lib.hasInfix "prefix_extractor=rocksdb" electrsPreStart)
+  "electrs 0.12.0 must not pass --daemon-p2p-addr, must enable bitcoind rest=1 and submitpackage RPC, and must clean up pre-0.12.0 RocksDB format";
 pkgs.runCommand "bitcoin-btcpay-hardening" {} ''
   mkdir -p /build/secrets /build/nbxplorer
 

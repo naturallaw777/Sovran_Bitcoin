@@ -58,7 +58,7 @@ in {
 
     services.bitcoind = {
       enable = true;
-      listenWhitelisted = true;
+      rest = true;
     };
 
     systemd.tmpfiles.rules = [
@@ -72,6 +72,14 @@ in {
       preStart = ''
         echo "auth = \"${bitcoind.rpc.users.public.name}:$(cat ${secretsDir}/bitcoin-rpcpassword-public)\"" \
           > electrs.toml
+
+        # electrs 0.12.0 switched to bindex (format v1) and panics on startup
+        # if a pre-0.12.0 (format v0 / FixedPrefix.8) RocksDB store is present.
+        dbNetDir='${cfg.dataDir}/${bitcoind.makeNetworkName "bitcoin" "regtest"}'
+        if [[ -d "$dbNetDir" ]] && grep -q 'prefix_extractor=rocksdb\.FixedPrefix\.8' "$dbNetDir"/OPTIONS-* 2>/dev/null; then
+          echo "electrs: removing pre-0.12.0 database at $dbNetDir for bindex 0.12.0 reindex"
+          rm -rf "$dbNetDir"
+        fi
         '';
       serviceConfig = nbLib.defaultHardening // {
         # electrs only uses the working directory for reading electrs.toml
@@ -85,7 +93,6 @@ in {
           --electrum-rpc-addr=${cfg.address}:${toString cfg.port} \
           --monitoring-addr=${cfg.address}:${toString cfg.monitoringPort} \
           --daemon-rpc-addr=${nbLib.addressWithPort bitcoind.rpc.address bitcoind.rpc.port} \
-          --daemon-p2p-addr=${nbLib.addressWithPort bitcoind.address bitcoind.whitelistedPort} \
           ${cfg.extraArgs}
         '';
         User = cfg.user;
