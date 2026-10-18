@@ -1,27 +1,17 @@
-# Sovran_Bitcoin
+# Sovran Bitcoin
 
-**An opinionated, Tor-first Bitcoin stack for NixOS** — the Bitcoin/Lightning
-engine of [Sovran_SystemsOS](https://git.sovransystems.com/Sovran_Systems/Sovran_SystemsOS),
-packaged as a standalone flake so any NixOS user can run it.
+**An opinionated, Tor-first Bitcoin stack for NixOS.** This standalone flake packages the Bitcoin/Lightning engine of [Sovran SystemsOS](https://git.sovransystems.com/Sovran_Systems/Sovran_SystemsOS)—think “nix-bitcoin, with Sovran defaults.”
 
-Think *"nix-bitcoin, but Sovran-opinionated"*:
+- LND only; Tor-proxied traffic and onion services by default.
+- Strict nix-bitcoin systemd hardening; secrets are generated on first activation.
+- Optional Zeus/BitBanana node access, NWC wallet connections, RTL, BTCPay, Mempool and Lightning Addresses.
+- Services bind to loopback; exposing clearnet endpoints is up to your web server.
 
-- **LND only** — no clightning, no decision fatigue
-- **Flexible mobile access** — full LND management in Zeus or BitBanana, or
-  optional NWC wallet connections with app-specific spending limits
-- **Tor-first** — proxied, enforced, with onion services for everything
-- **Hardened** — every service runs with nix-bitcoin's strict systemd sandboxing
-- **Vendored packages** — RTL, Mempool and Sovran's LND-only Alby Hub
-  fork are built by this flake
-- **Secrets handled for you** — RPC passwords, macaroons and TLS certs are
-  generated on the host at activation (`nix-bitcoin.generateSecrets`)
-- **No webserver opinions** — everything binds to loopback; clearnet is *your*
-  webserver's job
-
-Vendored from [fort-nix/nix-bitcoin](https://github.com/fort-nix/nix-bitcoin)
-(MIT) and Sovran_SystemsOS (AGPL-3.0) — see `THIRD_PARTY_NOTICES.md`.
+Vendored from [fort-nix/nix-bitcoin](https://github.com/fort-nix/nix-bitcoin) (MIT) and Sovran SystemsOS (AGPL-3.0); see `THIRD_PARTY_NOTICES.md`.
 
 ## Quick start
+
+Add the flake and module to your NixOS configuration:
 
 ```nix
 # flake.nix
@@ -34,78 +24,59 @@ Vendored from [fort-nix/nix-bitcoin](https://github.com/fort-nix/nix-bitcoin)
   outputs = { self, nixpkgs, sovran-bitcoin }: {
     nixosConfigurations.myhost = nixpkgs.lib.nixosSystem {
       system = "x86_64-linux";
-      modules = [
-        sovran-bitcoin.nixosModules.default
-        ./configuration.nix
-      ];
+      modules = [ sovran-bitcoin.nixosModules.default ./configuration.nix ];
     };
   };
 }
 ```
 
 ```nix
-# configuration.nix — the base node
+# configuration.nix
 {
   sovran-bitcoin = {
     enable = true;
-    operatorName = "alice";  # your user, gets bitcoin-cli / lncli / nodeinfo
+    operatorName = "alice"; # gets bitcoin-cli, lncli and nodeinfo
   };
 }
 ```
 
-That gives you, with zero further config:
+The default preset enables:
 
-| Component   | What you get                                                        |
-|-------------|---------------------------------------------------------------------|
-| `bitcoind`  | mainnet, txindex, Tor-proxied + enforced, onion P2P, bloom filters  |
-| `electrs`   | Electrum server (for Sparrow etc.), onion service                   |
-| `lnd`       | Lightning node, Tor-proxied, public P2P onion                       |
-| `lndconnect` | `lndconnect` command printing a Zeus-ready QR over the REST onion    |
-| `lndconnect-grpc` | `lndconnect-grpc` command printing a BitBanana-ready QR over a separate gRPC onion |
-| secrets     | generated on first activation into `/etc/nix-bitcoin-secrets`       |
-| `nodeinfo`  | run `nodeinfo` as the operator for a full status report             |
+| Component | Default behavior |
+| --- | --- |
+| `bitcoind` | Mainnet, txindex, Tor proxy enforcement, onion P2P and bloom filters |
+| `electrs` | Electrum server (e.g. Sparrow), with onion service |
+| `lnd` | Tor-proxied Lightning node with public P2P onion |
+| `lndconnect` | Zeus-ready QR/URI over the LND REST onion |
+| `lndconnect-grpc` | BitBanana-ready QR/URI over a separate gRPC onion |
+| Secrets | Generated on activation in `/etc/nix-bitcoin-secrets` |
+| `nodeinfo` | Operator command for a full service/status report |
 
-The default preset keeps the existing REST onion/QR (`lndconnect`) for Zeus and
-adds a separate gRPC onion/QR (`lndconnect-grpc`) for BitBanana. The gRPC onion
-forwards to LND's loopback listener (default `127.0.0.1:10009`); it does not
-bind the gRPC API to the LAN or clearnet.
+The gRPC onion forwards to LND's loopback listener (default `127.0.0.1:10009`); the API is not exposed on LAN or clearnet.
 
-## Connect from Zeus or BitBanana
+## Connect a wallet app
 
-Choose direct LND access for full node and channel management, or use Nostr
-Wallet Connect (NWC) for a separate wallet-only connection with tighter
-permissions and an optional spending cap. You can use either mode, or both.
+Use **direct LND access** for full node/channel management, **NWC** for a separate wallet-only connection with optional spending limits, or both.
 
-### Direct LND access
-
-The default preset includes two scan-to-connect options:
+### Direct LND: Zeus and BitBanana
 
 | App | Command | Connection |
 | --- | --- | --- |
-| Zeus | `lndconnect` | REST over the `lnd-rest` Tor onion (default port 8080) |
-| BitBanana | `lndconnect-grpc` | gRPC over the `lnd-grpc` Tor onion (default port 10009) |
+| Zeus | `lndconnect` | REST over the `lnd-rest` onion (default port 8080) |
+| BitBanana | `lndconnect-grpc` | gRPC over the `lnd-grpc` onion (default port 10009) |
 
-Run the matching command on the node to print its QR code. Add `--url` to print
-the `lndconnect://` URI instead:
+Run the command on the node to show a QR; add `--url` to print the `lndconnect://` URI instead:
 
-```bash
-lndconnect          # Zeus
-lndconnect-grpc     # BitBanana
+```sh
+lndconnect             # Zeus QR
+lndconnect-grpc        # BitBanana QR
 lndconnect --url
 lndconnect-grpc --url
 ```
 
-Scan the QR or paste the URI into the app's node-connection screen. BitBanana
-recognizes the `.onion` address and connects over Tor. The gRPC onion forwards
-to LND's loopback listener; the preset does not bind that API to the LAN or
-clearnet. See the [BitBanana connection guide](https://docs.bitbanana.app/setup/connect-a-lightning-node/).
+Scan or paste the result into the app's node-connection screen. BitBanana detects the `.onion` address and connects over Tor; see its [connection guide](https://docs.bitbanana.app/setup/connect-a-lightning-node/).
 
-**Direct-access security:** these URIs contain LND's admin macaroon, which
-provides broad node control. Treat each QR/URI like a password; never post or
-share them.
-
-If configuring LND without the Sovran preset, enable the helpers and Tor
-endpoints with:
+**Security:** These connection strings contain LND's admin macaroon and grant broad node control. Treat them like passwords; never share them. For a non-preset LND configuration, enable the helpers and onion endpoints:
 
 ```nix
 services.lnd.lndconnect = {
@@ -115,24 +86,21 @@ services.lnd.lndconnect = {
 };
 ```
 
-### Optional NWC wallet access
+### Optional NWC wallet connections
 
-Enable `nwc` to run Sovran's self-hosted Alby Hub wallet service
-(`lnurl = true` also enables it):
+Enable `nwc` (also enabled by `lnurl`) to run Sovran's self-hosted Alby Hub wallet service. It has no web UI; manage it with `nwc-wallet`.
 
 ```nix
-{
-  sovran-bitcoin.features.nwc = true;
-}
+sovran-bitcoin.features.nwc = true;
 ```
 
-Create a separate connection for each app from the CLI:
+Create a wallet connection from the CLI:
 
-```bash
+```sh
 nwc-wallet create pocket-wallet pocket --limit-sats 5000
 ```
 
-Or declare sub-wallets directly in your NixOS configuration (`services.sovran-nwc.wallets` or `services.albyhub.wallets`):
+Or declare it in NixOS configuration (`services.sovran-nwc.wallets` or `services.albyhub.wallets`):
 
 ```nix
 {
@@ -144,142 +112,99 @@ Or declare sub-wallets directly in your NixOS configuration (`services.sovran-nw
 }
 ```
 
-This creates an isolated wallet connection holding 5,000 sats — all it can ever
-spend. Without `--limit-sats` (or `limitSats`), new connections are receive-only.
-The CLI prints a `pairing_uri` beginning with `nostr+walletconnect://` (for
-declarative wallets, it is written with mode `0600` to
-`/var/lib/albyhub/wallets/<alias>.pairing-uri`);
-copy it into the NWC wallet-connection flow in [Zeus](https://zeusln.com/blog/new-release-zeus-v0-10-0/)
-or [BitBanana](https://docs.bitbanana.app/setup/connect-a-hosted-wallet/nostr-wallet-connect-uri/).
+Each wallet has an isolated connection. A limit caps lifetime spending; without `--limit-sats`/`limitSats`, it is receive-only. The CLI prints a `nostr+walletconnect://` pairing URI. For declared wallets it is stored, mode `0600`, at `/var/lib/albyhub/wallets/<alias>.pairing-uri`. Import it into the NWC connection flow in [Zeus](https://zeusln.com/blog/new-release-zeus-v0-10-0/) or [BitBanana](https://docs.bitbanana.app/setup/connect-a-hosted-wallet/nostr-wallet-connect-uri/). NWC is wallet access, not node management. Keep pairing URIs private.
 
-NWC is wallet access, not node management — use direct LND access above for
-channels and peers. Pairing URIs are credentials: keep them private.
+### `nwc-wallet` commands
 
-## Adding services
+| Command | Purpose |
+| --- | --- |
+| `nwc-wallet create <name> <alias> [--receive-only] [--limit-sats SATS] [--qr]` | Create a wallet connection; optionally show its QR. The receive-only and spending-limit options are alternatives. |
+| `nwc-wallet list` | List managed wallets, including Lightning Addresses. |
+| `nwc-wallet lnurl <alias> [--qr]` | Show the Lightning Address and bech32 LNURL; optionally show a terminal QR. |
+| `nwc-wallet lnurl <alias> --address-only` | Print only the Lightning Address (e.g. for piping). |
+| `nwc-wallet lnurl <alias> --lnurl-only` | Print only the bech32 LNURL string. |
+| `nwc-wallet drain <wallet>` | Drain funds from a wallet. |
+| `nwc-wallet delete <wallet>` | Drain, then delete a wallet. |
+| `nwc-wallet rotate <wallet>` | Replace the NWC secret and revoke the old one. |
+| `nwc-wallet address show <alias>` | Check whether a Lightning Address endpoint is publicly reachable. |
+| `nwc-wallet health` | Check Alby Hub health. |
+
+For `drain`, `delete` and `rotate`, `<wallet>` can be its name, alias, Lightning Address or ID from `nwc-wallet list`. `--qr` requires `qrencode` (included when `lnurl` is enabled).
+
+## Optional services
+
+Set features in your NixOS configuration:
 
 ```nix
-{
-  sovran-bitcoin.features = {
-    rtl = true;          # Ride The Lightning (LND web UI) at http://127.0.0.1:3050/rtl
-    btcpayserver = true; # BTCPay + NBXplorer (Postgres), LND backend
-    mempool = true;      # Mempool explorer (MariaDB), UI on 127.0.0.1:60845
-    nwc = true;          # NWC via Alby Hub (no web UI; manage with nwc-wallet)
-    lnurl = true;        # self-hosted Lightning Addresses via NWC + LNURL
-  };
-
-  # lnurl needs to know the public Lightning Address domain:
-  services.sovran-lnurl.domain = "pay.example.com";
-}
+sovran-bitcoin.features = {
+  rtl = true;          # Ride The Lightning UI at 127.0.0.1:3050/rtl
+  btcpayserver = true; # BTCPay + NBXplorer (Postgres), using LND
+  mempool = true;      # Mempool explorer (MariaDB), UI at 127.0.0.1:60845
+  nwc = true;          # Alby Hub/NWC; manage with nwc-wallet, no web UI
+  lnurl = true;        # Lightning Addresses via NWC + LNURL
+};
+services.sovran-lnurl.domain = "pay.example.com"; # required for lnurl
 ```
 
-Dependencies are wired for you: `btcpayserver` enables NBXplorer, Postgres and
-an LND macaroon with a least-privilege permission set; `lnurl` implies `nwc`;
-`mempool` enables `electrs` and `txindex`. Each feature also gets an onion
-service. The bitcoind wallet is disabled by default and re-enabled
-automatically when `btcpayserver` is on (NBXplorer needs it).
+Dependencies are automatic: BTCPay enables NBXplorer, Postgres and a least-privilege LND macaroon; LNURL enables NWC; Mempool enables Electrs and txindex. Features get onion services. The bitcoind wallet is disabled by default and re-enabled automatically for BTCPay/NBXplorer.
 
-## Clearnet is yours
+## Networking and customization
 
-The flake deliberately stops at loopback. For full clearnet operation, put
-your own webserver (nginx, Caddy, …) in front:
+The flake deliberately stops at loopback. Put your own web server (nginx, Caddy, etc.) in front for clearnet/TLS:
 
-| Service     | Local endpoint            | Notes                                          |
-|-------------|---------------------------|------------------------------------------------|
-| BTCPay      | `http://127.0.0.1:23000`  | reverse-proxy + TLS; see BTCPay docs for headers |
-| Mempool UI  | `http://127.0.0.1:60845`  | nginx snippets are exposed (see below)          |
-| LNURL       | `http://127.0.0.1:8181`   | proxy `/.well-known/lnurlp/*` and `/lnurlp/*` of your Lightning domain |
+| Service | Local endpoint | Notes |
+| --- | --- | --- |
+| BTCPay | `http://127.0.0.1:23000` | Reverse proxy + TLS; see BTCPay docs for headers. |
+| Mempool UI | `http://127.0.0.1:60845` | Reusable nginx snippets: `config.services.mempool.frontend.nginxConfig.{httpConfig,staticContent,proxyApi}`. |
+| LNURL | `http://127.0.0.1:8181` | Proxy `/.well-known/lnurlp/*` and `/lnurlp/*` on your Lightning domain. |
 
-Mempool ships reusable nginx snippets for public hosting — build on
-`config.services.mempool.frontend.nginxConfig.{httpConfig,staticContent,proxyApi}`.
-
-## Plain options underneath
-
-The preset only sets defaults (`mkDefault`). Everything stays overridable
-through the regular, nix-bitcoin-style options:
+The preset uses `mkDefault`, so standard nix-bitcoin options remain overridable. For example:
 
 ```nix
 { ... }: {
-  services.bitcoind.prune = 10000;       # prune to ~10 GB
+  services.bitcoind.prune = 10000;       # about 10 GB
   services.bitcoind.dbCache = 2000;
   services.bitcoind.dataDir = "/mnt/btc/bitcoind";
   services.lnd.extraConfig = "protocol.option-scid-alias=true"; # already default
-  services.rtl.extraCurrency = "USD";    # fiat display (relaxes Tor for RTL)
-  services.albyhub.relay = "wss://relay.example.com";  # sovereign Nostr relay
+  services.rtl.extraCurrency = "USD";    # relaxes Tor for RTL
+  services.albyhub.relay = "wss://relay.example.com";
   services.sovran-lnurl.domainFile = "/var/lib/secrets/lightning-domain";
   services.mempool.frontend.settings.BASE_MODULE = "liquid";
   nix-bitcoin.onionServices.rtl.enable = false;
 }
 ```
 
-Disable a piece of the base stack:
+Disable a base service with its feature option, e.g. `sovran-bitcoin.features.electrs = false;` (Electrs is useful for Mempool and Sparrow).
 
-```nix
-{ ... }: {
-  sovran-bitcoin.features.electrs = false; # you probably want it for mempool/Sparrow
-}
-```
+## System tools
 
-## Tools on the system
-
-- `bitcoin-cli`, `lncli` — as the operator user
-- `nodeinfo` — service/onion status report
-- `lndconnect` — REST QR / URI for Zeus and other LND REST clients
-- `lndconnect-grpc` — gRPC QR / URI for BitBanana and other gRPC clients
-- `nwc-wallet` — manage NWC wallets from the CLI
-  (Sovran's Alby Hub fork has **no web UI**; this CLI is the operator
-  interface. Env is baked in when `nwc` is enabled.)
-
-  | Subcommand | What it does |
-  |---|---|
-  | `nwc-wallet create <name> <alias> [--receive-only | --limit-sats SATS] [--qr]` | Create an isolated NWC connection. Receive-only by default; `--limit-sats` funds it with that many sats. The pairing URI is shown once. `--qr` prints a Lightning Address QR, not the pairing URI. |
-  | `nwc-wallet list` | List all managed wallets (includes Lightning Address). |
-  | `nwc-wallet lnurl <alias> [--qr]` | Show the Lightning Address, bech32 LNURL, and optionally a terminal QR code for receiving payments. |
-  | `nwc-wallet lnurl <alias> --address-only` | Print only the Lightning Address (e.g. for piping). |
-  | `nwc-wallet lnurl <alias> --lnurl-only` | Print only the bech32 LNURL string. |
-  | `nwc-wallet drain <wallet>` | Drain funds from a wallet. |
-  | `nwc-wallet delete <wallet>` | Drain, then delete a wallet. |
-  | `nwc-wallet rotate <wallet>` | Generate a new NWC connection secret (old one is revoked). |
-  | `nwc-wallet address show <alias>` | Test if a Lightning Address endpoint is publicly reachable. |
-  | `nwc-wallet health` | Check Alby Hub health. |
-
-  For `drain`, `delete` and `rotate`, `<wallet>` may be the name, alias,
-  Lightning Address or id from `nwc-wallet list`. `--qr` renders a QR in the
-  terminal (requires `qrencode`, included when `lnurl` is enabled).
+The operator gets `bitcoin-cli` and `lncli`; other installed tools are `nodeinfo`, `lndconnect`, `lndconnect-grpc` and `nwc-wallet` (available when NWC is enabled).
 
 ## Flake outputs
 
-| Output | What |
-|--------|------|
-| `nixosModules.default` (`.sovran-bitcoin`) | all modules + `sovran-bitcoin.*` options, auto-applies the package overlay |
-| `overlays.default` (`.sovran-bitcoin`) | adds `pkgs.sovran-bitcoin.*` (rtl, mempool, albyhub and nwc) |
-| `packages.<system>.*` | `rtl`, `mempool-backend`, `mempool-frontend`, `albyhub`, `nwc` |
-| `checks.<system>.*` | evaluation checks + the BTCPay/bitcoind hardening test |
+| Output | Contents |
+| --- | --- |
+| `nixosModules.default` (`.sovran-bitcoin`) | All modules and `sovran-bitcoin.*` options; applies the package overlay automatically. |
+| `overlays.default` (`.sovran-bitcoin`) | Adds `pkgs.sovran-bitcoin.*` packages: RTL, Mempool, Alby Hub and NWC. |
+| `packages.<system>.*` | `rtl`, `mempool-backend`, `mempool-frontend`, `albyhub`, `nwc`. |
+| `checks.<system>.*` | Evaluation checks and BTCPay/bitcoind hardening test. |
 
-If you don't want the overlay auto-applied, import `./modules` from this repo
-in your own wrapper and add `overlays.default` yourself.
+To avoid automatic overlay application, import `./modules` in your wrapper and add `overlays.default` yourself.
 
-## Secrets
+## Secrets and backups
 
-Secrets are generated on the host into `/etc/nix-bitcoin-secrets`
-(`nix-bitcoin.secretsDir`) by the one-shot `setup-secrets` service at
-activation, with per-service ownership (lnd certs, RTL password, bitcoind RPC
-HMACs, macaroons). **Back this directory up** — losing the LND wallet seed
-(`~lnd data dir/lnd-seed-mnemonic`, `0600`) or the secrets dir means losing
-funds/access. To manage secrets yourself, set `nix-bitcoin.generateSecrets =
-false;` and study the vendored `modules/nix-bitcoin/secrets/secrets.nix`.
+At activation, the one-shot `setup-secrets` service writes generated secrets to `/etc/nix-bitcoin-secrets` (`nix-bitcoin.secretsDir`), with per-service ownership. This includes LND certificates, RTL password, bitcoind RPC HMACs and macaroons.
 
-## Deviations from Sovran_SystemsOS (on purpose)
+**Back up this directory.** Losing it—or the LND seed at `~lnd data dir/lnd-seed-mnemonic` (mode `0600`)—can mean losing funds or access. To manage secrets yourself, set `nix-bitcoin.generateSecrets = false;` and review `modules/nix-bitcoin/secrets/secrets.nix`.
 
-- No `/run/media/Second_Drive/...` data dirs — everything under `/var/lib`
-- No Sovran Hub coupling: NWC/LNURL run as plain `systemd` units, and the
-  LNURL domain is an option (`services.sovran-lnurl.domain` / `.domainFile`)
-  instead of the Hub's `/var/lib/domains/lightning`
-- No firewall port 3051 (that was the Hub)
-- `disablewallet` is only enabled when BTCPay is *off* (the OS enables it
-  unconditionally)
-- Operator user defaults to `operator` instead of `free`
+## Differences from Sovran SystemsOS
+
+- Data stays under `/var/lib`; no `/run/media/Second_Drive/...` paths.
+- NWC/LNURL are plain systemd services, not tied to Sovran Hub. Configure the LNURL domain with `services.sovran-lnurl.domain` or `.domainFile`, not Hub's `/var/lib/domains/lightning`.
+- No Hub firewall port 3051.
+- `disablewallet` is enabled only when BTCPay is off (SystemsOS enables it unconditionally).
+- The operator defaults to `operator`, not `free`.
 
 ## License
 
-AGPL-3.0 (see `LICENSE`), with vendored MIT-licensed portions from
-nix-bitcoin (`THIRD_PARTY_NOTICES.md`).
+AGPL-3.0; see `LICENSE`. Vendored MIT-licensed portions are listed in `THIRD_PARTY_NOTICES.md`.
