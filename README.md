@@ -1,4 +1,4 @@
-# Sovran Bitcoin
+# Sovran_Bitcoin
 
 **An opinionated, Tor-first Bitcoin stack for NixOS.** This standalone flake packages the Bitcoin/Lightning engine of [Sovran SystemsOS](https://git.sovransystems.com/Sovran_Systems/Sovran_SystemsOS)—think “nix-bitcoin, with Sovran defaults.”
 
