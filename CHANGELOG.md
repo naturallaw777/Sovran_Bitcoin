@@ -8,6 +8,8 @@ This project follows [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- Allow loopback IP traffic for `albyhub.service` while retaining nix-bitcoin's deny-by-default network hardening. The NWC daemon needs localhost access for its management API, LND REST, and Tor SOCKS proxy; without the allowlist, the service listened on `127.0.0.1:18080` but local clients timed out.
+- Force clearnet NWC relay URLs through the configured Tor SOCKS proxy when Tor is enabled. The daemon's default `wss://relay.getalby.com` endpoints were otherwise dialed directly and blocked by `IPAddressDeny=any`, so pairing URIs were generated but the wallet service never received client requests.
 - Fixed `electrs.service` startup failure on `electrs 0.12.0` (`Error: An unknown argument '--daemon-p2p-addr=127.0.0.1:8335' was specified.`):
   - Removed the obsolete `--daemon-p2p-addr` CLI flag from `modules/electrs.nix` (dropped upstream in `electrs 0.12.0` when block indexing moved to `bindex`).
   - Added `services.bitcoind.rest` (`rest=1` in `bitcoin.conf`) and enabled it automatically when `services.electrs.enable = true`, as required by `electrs 0.12.0` (`bindex`) for `/rest/blockhashbyheight/`, `/rest/headers/`, `/rest/block/`, `/rest/spenttxouts/`, and `/rest/blockpart/`.

@@ -12,6 +12,7 @@ import threading
 import time
 import types
 import unittest
+from urllib.parse import parse_qs, urlsplit
 from typing import Any
 
 _PKG_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -200,6 +201,12 @@ class SovranNwcDaemonTest(unittest.TestCase):
             "Mobile Wallet", "mobile", "send_receive_limited", 20_000, "pay.example.com"
         )
         self.assertTrue(created["pairing_uri"].startswith("nostr+walletconnect://"))
+        pairing = urlsplit(created["pairing_uri"])
+        pairing_params = parse_qs(pairing.query)
+        self.assertEqual(pairing.scheme, "nostr+walletconnect")
+        self.assertEqual(pairing_params["relay"], ["wss://relay.example.com"])
+        self.assertEqual(len(pairing_params["secret"][0]), 64)
+        self.assertNotIn("&amp;", created["pairing_uri"])
         self.assertEqual(created["wallet"]["balance_sats"], 20_000)
         self.assertEqual(created["wallet"]["lightning_address"], "mobile@pay.example.com")
         app_id = int(created["wallet"]["id"])

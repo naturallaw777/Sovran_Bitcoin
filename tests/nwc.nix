@@ -52,8 +52,14 @@ assert lib.assertMsg (nwcUnit.environment.LND_REST_ADDRESS == "127.0.0.1:8080")
   "Sovran NWC must connect to loopback LND REST on 127.0.0.1:8080";
 assert lib.assertMsg (nwcUnit.environment ? NWC_TOR_SOCKS_PROXY)
   "Sovran NWC must receive NWC_TOR_SOCKS_PROXY when Tor client is enabled";
+assert lib.assertMsg (nwcUnit.environment.NWC_FORCE_TOR_RELAY == "1")
+  "Sovran NWC must route clearnet relay connections through Tor when the Tor client is enabled";
 assert lib.assertMsg (nwcUnit.serviceConfig.ProtectSystem == "strict" && nwcUnit.serviceConfig.NoNewPrivileges)
   "Sovran NWC unit must run with nix-bitcoin systemd hardening";
+assert lib.assertMsg (nwcUnit.serviceConfig.IPAddressDeny == "any"
+  && builtins.elem "127.0.0.1/32" nwcUnit.serviceConfig.IPAddressAllow
+  && builtins.elem "::1/128" nwcUnit.serviceConfig.IPAddressAllow)
+  "Sovran NWC must retain deny-by-default networking while permitting loopback API, LND REST, and Tor SOCKS traffic";
 assert lib.assertMsg (cfg.services.albyhub.wallets ? pocket && cfg.services.albyhub.wallets.pocket.limitSats == 5000)
   "services.sovran-nwc.wallets alias must populate declarative sub-wallets";
 assert lib.assertMsg (builtins.length nwcUnit.serviceConfig.ExecStartPost == 1)

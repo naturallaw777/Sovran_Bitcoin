@@ -254,6 +254,9 @@ in {
         RELAY = cfg.relay;
       } // optionalAttrs config.services.tor.client.enable {
         NWC_TOR_SOCKS_PROXY = config.nix-bitcoin.torClientAddressWithPort;
+        # The default public relays use wss://, but defaultHardening blocks
+        # direct egress. Route those clearnet relay connections through Tor too.
+        NWC_FORCE_TOR_RELAY = "1";
       };
 
       serviceConfig = nbLib.defaultHardening // {
@@ -267,6 +270,9 @@ in {
         RestartSec = "10s";
         UMask = "0077";
         NoNewPrivileges = true;
+        # The local CLI, LND REST API, and Tor SOCKS proxy all use loopback.
+        # Keep defaultHardening's IPAddressDeny=any for every non-loopback address.
+        IPAddressAllow = [ "127.0.0.1/32" "::1/128" ];
         PrivateTmp = true;
         ProtectHome = true;
         ProtectSystem = "strict";
