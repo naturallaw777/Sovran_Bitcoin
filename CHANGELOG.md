@@ -8,6 +8,59 @@ This project follows [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- Fixed NWC spending failing with `Error Not Found` (HTTP 404) on LND 0.21+.
+  LND 0.21 removed the deprecated payment RPCs and their REST routes —
+  including `POST /v1/channels/transactions` (`lnrpc.SendPaymentSync`) — as
+  announced in the 0.20 release notes ([lnd#10814](https://github.com/lightningnetwork/lnd/pull/10814)),
+  so every `pay_invoice` request from a connected NWC client (Zeus, BitBanana,
+  Alby, …) reached a REST route that no longer exists and died with LND's 404
+  "Not Found" while `get_info`/`get_balance` kept working. `nwc_lnd.pay_invoice`
+  now sends payments through `POST /v2/router/send` (`routerrpc.SendPaymentV2`),
+  the supported endpoint since LND 0.11:
+  - Sends `fee_limit_msat`/`amt_msat` as `SendPaymentRequest` fields
+    (the old `fee_limit.fixed_msat` belongs to the removed `SendRequest`).
+  - Streams only the terminal `lnrpc.Payment` update
+    (`no_inflight_updates`), parsing the newline-delimited JSON body.
+  - Reads `payment_preimage`/`payment_hash` as hex strings (the removed
+    endpoint returned base64 bytes) and reports `fee_msat` as fees paid.
+  - Maps `PaymentFailureReason` to readable NIP-47 `PAYMENT_FAILED` messages
+    (e.g. "No route found to destination").
+  - The `albyhub.macaroon` permissions (`offchain:read/write`) already cover
+    `routerrpc.Router/SendPaymentV2`; no macaroon changes are needed.
+- Added `tests/test_lnd_rest_pay.py` covering the `POST /v2/router/send`
+  request shape, streaming-response parsing, hex preimage handling, failure
+  reason mapping, and the removed-endpoint 404 regression.
+
+- Fixed internal wallet-to-wallet payments returning a fabricated preimage
+  (`sha256(payment_hash)`), which fails client-side verification (Zeus
+  checks `sha256(preimage) == payment_hash` and rejects such payments).
+  LND generates an invoice's preimage at creation (`lnrpc.LookupInvoice`
+  returns `r_preimage` even while the invoice is OPEN), so the real
+  preimage is now recorded when `make_invoice` runs and resolved from LND
+  when a ledger row predates preimage storage. Both ledger rows carry it
+  and `payment_sent`/`payment_received` notifications include it.
+- Enabled `pay_keysend` (NWC-04) for spend-capable wallets (previously
+  `RESTRICTED` even with the spend scope, breaking BitBanana's keysend
+  button): spontaneous payments through `POST /v2/router/send` (`dest` =
+  the 33-byte pubkey, `amt_msat`, keysend preimage in custom TLV
+  `5482373484`, optional extra `tlv_records`). The `pay_invoice` spend
+  scope now covers `pay_keysend`, so existing connections gain it without
+  re-pairing; receive-only wallets stay `RESTRICTED`, and every keysend is
+  still capped by wallet balance and monthly budget.
+- Removed the deprecated `multi_pay_invoice`/`multi_pay_keysend` commands
+  from the advertised methods (they were advertised via `get_info` but
+  answered `NOT_IMPLEMENTED` — clients trusted the advertisement and then
+  failed). They were dropped from NIP-47 and only exist as an Alby Hub
+  legacy dialect; they now answer `NOT_IMPLEMENTED` explicitly and are no
+  longer listed in `get_info`. Batch-payout tools that require them will
+  fail fast instead of half-working. Unknown methods in general (e.g.
+  `sign_message`) now answer `NOT_IMPLEMENTED` rather than `RESTRICTED`,
+  distinguishing "not supported" from "this wallet may not use it".
+- Added `tests/test_followups.py` (internal preimage verification incl.
+  legacy ledger rows, `multi_pay_*`/unknown-method rejection,
+  keysend success/restriction/budget, `get_info` advertisement) and
+  keysend request-shape tests in `tests/test_lnd_rest_pay.py`.
+
 - Allow loopback IP traffic for `albyhub.service` while retaining nix-bitcoin's deny-by-default network hardening. The NWC daemon needs localhost access for its management API, LND REST, and Tor SOCKS proxy; without the allowlist, the service listened on `127.0.0.1:18080` but local clients timed out.
 - Force clearnet NWC relay URLs through the configured Tor SOCKS proxy when Tor is enabled. The daemon's default `wss://relay.getalby.com` endpoints were otherwise dialed directly and blocked by `IPAddressDeny=any`, so pairing URIs were generated but the wallet service never received client requests.
 - Fixed `electrs.service` startup failure on `electrs 0.12.0` (`Error: An unknown argument '--daemon-p2p-addr=127.0.0.1:8335' was specified.`):

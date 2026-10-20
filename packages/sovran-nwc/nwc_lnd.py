@@ -13,6 +13,7 @@ from __future__ import annotations
 import base64
 import json
 import os
+import secrets
 import ssl
 import time
 import urllib.error
@@ -34,6 +35,17 @@ class LndPaymentError(LndError):
 
     def __init__(self, message: str) -> None:
         super().__init__("PAYMENT_FAILED", message)
+
+
+# lnrpc.PaymentFailureReason → human-readable payment failure message
+_FAILURE_REASONS = {
+    "FAILURE_REASON_TIMEOUT": "Payment timeout: no route found in time",
+    "FAILURE_REASON_NO_ROUTE": "No route found to destination",
+    "FAILURE_REASON_ERROR": "Payment failed due to an error",
+    "FAILURE_REASON_INCORRECT_PAYMENT_DETAILS": "Payment details incorrect",
+    "FAILURE_REASON_INSUFFICIENT_BALANCE": "Insufficient balance for payment",
+    "FAILURE_REASON_INVOICE_EXPIRED": "Invoice expired",
+}
 
 
 class LndRestClient:
@@ -88,6 +100,23 @@ class LndRestClient:
         body: dict[str, Any] | None = None,
         timeout: int = 30,
     ) -> dict[str, Any]:
+        raw = self.request_text(method, path, body=body, timeout=timeout)
+        if not raw:
+            return {}
+        return json.loads(raw)
+
+    def request_text(
+        self,
+        method: str,
+        path: str,
+        body: dict[str, Any] | None = None,
+        timeout: int = 30,
+    ) -> str:
+        """Perform a request and return the raw response body as text.
+
+        Used for streaming endpoints (e.g. `POST /v2/router/send`) whose body
+        is a sequence of JSON documents rather than a single object.
+        """
         mac_hex = self._get_macaroon_hex()
         url = f"{self.rest_url}{path}"
         data = json.dumps(body).encode("utf-8") if body is not None else None
@@ -103,9 +132,7 @@ class LndRestClient:
         try:
             with urllib.request.urlopen(req, timeout=timeout, context=ctx) as resp:
                 raw = resp.read()
-                if not raw:
-                    return {}
-                return json.loads(raw.decode("utf-8"))
+                return raw.decode("utf-8") if raw else ""
         except urllib.error.HTTPError as exc:
             err_msg = f"LND {method} {path} returned HTTP {exc.code}"
             try:
@@ -263,31 +290,129 @@ class LndRestClient:
     ) -> dict[str, Any]:
         body: dict[str, Any] = {
             "payment_request": bolt11.strip(),
-            "fee_limit": {"fixed_msat": str(int(fee_limit_msat))},
-            "allow_self_payment": True,
+            "fee_limit_msat": str(int(fee_limit_msat)),
         }
         if amount_msat is not None and amount_msat > 0:
             body["amt_msat"] = str(int(amount_msat))
+        return self.send_payment_v2(body, fee_limit_msat=fee_limit_msat)
 
-        resp = self.request(
-            "POST", "/v1/channels/transactions", body=body, timeout=60
-        )
-        pay_err = str(resp.get("payment_error") or "").strip()
-        if pay_err:
-            raise LndPaymentError(pay_err)
+    def pay_keysend(
+        self,
+        dest_pubkey_hex: str,
+        amount_msat: int,
+        fee_limit_msat: int,
+        preimage_hex: str = "",
+        tlv_records: list[dict[str, Any]] | None = None,
+    ) -> dict[str, Any]:
+        """Send a keysend (spontaneous) payment via SendPaymentV2.
 
-        preimage_b64 = str(resp.get("payment_preimage") or "")
-        preimage_hex = (
-            base64.b64decode(preimage_b64).hex() if preimage_b64 else ""
-        )
-        hash_b64 = str(resp.get("payment_hash") or "")
-        payment_hash_hex = (
-            base64.b64decode(hash_b64).hex() if hash_b64 else ""
-        )
-        route = resp.get("payment_route") or {}
-        fees_msat = int(route.get("total_fees_msat") or 0)
-        return {
-            "preimage": preimage_hex.lower(),
-            "payment_hash": payment_hash_hex.lower(),
-            "fees_paid_msat": fees_msat,
+        The keysend preimage rides in TLV record 5482373484. `preimage_hex`
+        (hex) is used when given, otherwise one is generated; any extra
+        `tlv_records` ({type, value(hex)}) are merged in as custom records.
+        """
+        preimage = bytes.fromhex(preimage_hex) if preimage_hex else secrets.token_bytes(32)
+        records: dict[str, str] = {}
+        for rec in tlv_records or []:
+            try:
+                rtype = str(int(rec.get("type") or 0))
+                value_hex = str(rec.get("value") or "")
+                if rtype and rtype != "0" and value_hex:
+                    records[rtype] = base64.b64encode(bytes.fromhex(value_hex)).decode("ascii")
+            except ValueError:
+                continue
+        # The keysend preimage record always wins over caller-supplied TLVs.
+        records["5482373484"] = base64.b64encode(preimage).decode("ascii")
+
+        body: dict[str, Any] = {
+            "dest": base64.b64encode(bytes.fromhex(dest_pubkey_hex.strip())).decode("ascii"),
+            "amt_msat": str(int(amount_msat)),
+            "fee_limit_msat": str(int(fee_limit_msat)),
+            "dest_custom_records": records,
         }
+        result = self.send_payment_v2(body, fee_limit_msat=fee_limit_msat)
+        # Trust LND's returned preimage; fall back to the one we sent.
+        if not result.get("preimage"):
+            result["preimage"] = preimage.hex()
+        return result
+
+    def send_payment_v2(
+        self,
+        body: dict[str, Any],
+        fee_limit_msat: int,
+    ) -> dict[str, Any]:
+        # LND 0.21 removed the deprecated `POST /v1/channels/transactions`
+        # (lnrpc.SendPaymentSync) REST route; payments are sent through
+        # routerrpc.SendPaymentV2 (`POST /v2/router/send`), which streams
+        # `lnrpc.Payment` updates (terminal state only with
+        # `no_inflight_updates`) as newline-delimited JSON.
+        body = dict(body)
+        body.setdefault("fee_limit_msat", str(int(fee_limit_msat)))
+        body["allow_self_payment"] = True
+        body["no_inflight_updates"] = True
+        body.setdefault("timeout_seconds", 60)
+
+        raw = self.request_text("POST", "/v2/router/send", body=body, timeout=120)
+        updates = self.parse_json_stream(raw)
+        if not updates:
+            raise LndPaymentError("LND returned no payment status")
+        payment = updates[-1]
+        # Some gateways wrap stream items as {"result": {...}}; unwrap so the
+        # lnrpc.Payment fields are read from the right level.
+        if isinstance(payment.get("result"), dict):
+            payment = payment["result"]
+
+        status = str(payment.get("status") or "").upper()
+        # In lnrpc.Payment the hash and preimage are hex strings (not base64).
+        payment_hash_hex = str(payment.get("payment_hash") or "").lower()
+        preimage_hex = str(payment.get("payment_preimage") or "").lower()
+        fees_msat = int(payment.get("fee_msat") or 0)
+        if fees_msat == 0 and payment.get("fee_sat") is not None:
+            fees_msat = int(payment.get("fee_sat") or 0) * 1000
+
+        if status == "SUCCEEDED":
+            return {
+                "preimage": preimage_hex,
+                "payment_hash": payment_hash_hex,
+                "fees_paid_msat": fees_msat,
+            }
+
+        if status == "FAILED":
+            reason = str(payment.get("failure_reason") or "").strip()
+            human = (
+                _FAILURE_REASONS.get(reason)
+                or _FAILURE_REASONS.get("FAILURE_REASON_" + reason)
+                or reason
+                or "payment failed"
+            )
+            raise LndPaymentError(human)
+
+        raise LndPaymentError(
+            f"Payment did not reach a terminal state (status={status or 'unknown'})"
+        )
+
+    @staticmethod
+    def parse_json_stream(raw: str) -> list[dict[str, Any]]:
+        """Parse a gRPC-gateway streaming body: one or more JSON documents.
+
+        Streaming REST responses are newline-delimited JSON objects; also
+        tolerate concatenated objects and a single document.
+        """
+        out: list[dict[str, Any]] = []
+        text = raw.strip()
+        if not text:
+            return out
+        decoder = json.JSONDecoder()
+        idx = 0
+        while idx < len(text):
+            while idx < len(text) and text[idx].isspace():
+                idx += 1
+            if idx >= len(text):
+                break
+            try:
+                value, end = decoder.raw_decode(text, idx)
+            except ValueError:
+                break
+            if isinstance(value, dict):
+                out.append(value)
+            idx = end
+        return out

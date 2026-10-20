@@ -41,8 +41,19 @@ SCOPE_TO_NIP47_METHODS = {
     "make_invoice": ["make_invoice"],
     "lookup_invoice": ["lookup_invoice"],
     "list_transactions": ["list_transactions"],
-    "pay_invoice": ["pay_invoice", "multi_pay_invoice"],
+    # The spend scope covers every way to send: invoice payments and
+    # keysend (NWC-04). The deprecated multi_pay_* commands are deliberately
+    # not offered — they were removed from NIP-47 and only exist as an
+    # Alby Hub legacy dialect.
+    "pay_invoice": ["pay_invoice", "pay_keysend"],
 }
+
+# Every method this daemon knows how to handle, in any scope. Anything else
+# is answered NOT_IMPLEMENTED (rather than RESTRICTED, which would claim the
+# method exists but this wallet may not use it).
+ALL_KNOWN_NIP47_METHODS = frozenset(
+    m for methods in SCOPE_TO_NIP47_METHODS.values() for m in methods
+)
 
 
 def scopes_to_nip47_methods(scopes: list[str]) -> list[str]:
@@ -531,6 +542,23 @@ class NwcStore:
                 return None
             return self._row_to_tx_dict(row) if row else None
 
+    def set_preimage_for_hash(self, payment_hash: str, preimage: str) -> int:
+        """Record the real payment preimage on every ledger row with this hash.
+
+        Used when an internal self-payment settles an invoice whose stored
+        preimage is missing (e.g. rows created before preimages were kept).
+        """
+        ph = payment_hash.strip().lower()
+        pre = preimage.strip().lower()
+        if not ph or not pre:
+            return 0
+        with self._lock:
+            cur = self._conn.execute(
+                "UPDATE sovran_transactions SET preimage = ? WHERE payment_hash = ?",
+                (pre, ph),
+            )
+            return int(cur.rowcount or 0)
+
     def list_transactions(
         self,
         app_id: int | None = None,
@@ -650,7 +678,10 @@ class NwcStore:
                             int(amount_msat),
                             ph,
                             invoice,
-                            internal_inc["preimage"] or hashlib.sha256(ph.encode()).hexdigest(),
+                            # Real preimage only — never fabricate one. The
+                            # caller resolves it from LND when missing so the
+                            # value is verifiable (sha256(preimage) == hash).
+                            internal_inc["preimage"] or "",
                             description,
                             description_hash,
                             now,
@@ -1066,6 +1097,16 @@ class SovranNwcDaemon:
         self, app: dict[str, Any], method: str, params: dict[str, Any]
     ) -> dict[str, Any]:
         app_id = int(app["id"])
+
+        if method not in ALL_KNOWN_NIP47_METHODS:
+            return {
+                "result_type": method or "unknown",
+                "error": {
+                    "code": "NOT_IMPLEMENTED",
+                    "message": f"Method '{method}' is not supported by this wallet",
+                },
+            }
+
         scopes = set(app.get("scopes") or [])
         allowed_methods = set(scopes_to_nip47_methods(list(scopes)))
 
@@ -1135,6 +1176,18 @@ class SovranNwcDaemon:
                     created_at=inv["created_at"],
                     expires_at=inv["expires_at"],
                 )
+                # LND generates the preimage when the invoice is created
+                # (lnrpc.LookupInvoice returns r_preimage even while OPEN), so
+                # record it now: an internal wallet-to-wallet payment of this
+                # invoice can then settle instantly with a verifiable preimage.
+                try:
+                    preimage = str(
+                        self.lnd.lookup_invoice(inv["payment_hash"]).get("preimage") or ""
+                    )
+                except _lnd_mod.LndError:
+                    preimage = ""
+                if preimage:
+                    self.store.set_preimage_for_hash(inv["payment_hash"], preimage)
                 return {
                     "result_type": "make_invoice",
                     "result": self.store.to_nip47_tx(tx),
@@ -1177,79 +1230,10 @@ class SovranNwcDaemon:
                 }
 
             if method == "pay_invoice":
-                bolt11 = str(params.get("invoice") or "").strip()
-                if not bolt11:
-                    return {
-                        "result_type": "pay_invoice",
-                        "error": {"code": "OTHER", "message": "Missing invoice"},
-                    }
-                decoded = self.lnd.decode_payreq(bolt11)
-                override_amt = int(params.get("amount") or 0) or None
-                amount_msat = int(decoded["amount_msat"] or override_amt or 0)
-                if amount_msat <= 0:
-                    return {
-                        "result_type": "pay_invoice",
-                        "error": {
-                            "code": "OTHER",
-                            "message": "Zero-amount invoice requires an explicit amount",
-                        },
-                    }
-                fee_reserve_msat = max(10_000, (amount_msat + 99) // 100)
-                tx_id, internal_payee_id = self.store.reserve_outgoing_payment(
-                    app_id=app_id,
-                    amount_msat=amount_msat,
-                    fee_reserve_msat=fee_reserve_msat,
-                    payment_hash=decoded["payment_hash"],
-                    invoice=bolt11,
-                    description=decoded["description"],
-                    description_hash=decoded["description_hash"],
-                )
-                if internal_payee_id is not None:
-                    tx = self.store.find_tx_for_app(
-                        app_id, payment_hash=decoded["payment_hash"]
-                    )
-                    preimage = (tx or {}).get("preimage") or ""
-                    if tx:
-                        self._emit_notification(app_id, "payment_sent", tx)
-                    inc_tx = self.store.find_tx_for_app(
-                        internal_payee_id, payment_hash=decoded["payment_hash"]
-                    )
-                    if inc_tx:
-                        self._emit_notification(
-                            internal_payee_id, "payment_received", inc_tx
-                        )
-                    return {
-                        "result_type": "pay_invoice",
-                        "result": {"preimage": preimage, "fees_paid": 0},
-                    }
+                return self._pay_invoice_payload(app, params)
 
-                try:
-                    pay_res = self.lnd.pay_invoice(
-                        bolt11,
-                        fee_limit_msat=fee_reserve_msat,
-                        amount_msat=override_amt if decoded["amount_msat"] == 0 else None,
-                    )
-                except _lnd_mod.LndError as exc:
-                    self.store.finalize_outgoing_payment(tx_id, succeeded=False)
-                    return {
-                        "result_type": "pay_invoice",
-                        "error": {"code": "PAYMENT_FAILED", "message": str(exc)},
-                    }
-
-                settled_tx = self.store.finalize_outgoing_payment(
-                    tx_id,
-                    succeeded=True,
-                    preimage=pay_res["preimage"],
-                    fees_paid_msat=pay_res["fees_paid_msat"],
-                )
-                self._emit_notification(app_id, "payment_sent", settled_tx)
-                return {
-                    "result_type": "pay_invoice",
-                    "result": {
-                        "preimage": pay_res["preimage"],
-                        "fees_paid": pay_res["fees_paid_msat"],
-                    },
-                }
+            if method == "pay_keysend":
+                return self._pay_keysend_payload(app, params)
 
         except NwcStoreError as exc:
             return {
@@ -1265,6 +1249,218 @@ class SovranNwcDaemon:
         return {
             "result_type": method,
             "error": {"code": "NOT_IMPLEMENTED", "message": f"Method {method} not implemented"},
+        }
+
+    # ── Payment handlers ───────────────────────────────────────────
+
+    def _pay_invoice_payload(
+        self, app: dict[str, Any], params: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Execute a single `pay_invoice` request and build its response payload."""
+        app_id = int(app["id"])
+        bolt11 = str(params.get("invoice") or "").strip()
+        if not bolt11:
+            return {
+                "result_type": "pay_invoice",
+                "error": {"code": "OTHER", "message": "Missing invoice"},
+            }
+        decoded = self.lnd.decode_payreq(bolt11)
+        override_amt = int(params.get("amount") or 0) or None
+        amount_msat = int(decoded["amount_msat"] or override_amt or 0)
+        if amount_msat <= 0:
+            return {
+                "result_type": "pay_invoice",
+                "error": {
+                    "code": "OTHER",
+                    "message": "Zero-amount invoice requires an explicit amount",
+                },
+            }
+        fee_reserve_msat = max(10_000, (amount_msat + 99) // 100)
+        tx_id, internal_payee_id = self.store.reserve_outgoing_payment(
+            app_id=app_id,
+            amount_msat=amount_msat,
+            fee_reserve_msat=fee_reserve_msat,
+            payment_hash=decoded["payment_hash"],
+            invoice=bolt11,
+            description=decoded["description"],
+            description_hash=decoded["description_hash"],
+        )
+        if internal_payee_id is not None:
+            return self._finish_internal_payment(
+                app_id, internal_payee_id, decoded["payment_hash"]
+            )
+
+        try:
+            pay_res = self.lnd.pay_invoice(
+                bolt11,
+                fee_limit_msat=fee_reserve_msat,
+                amount_msat=override_amt if decoded["amount_msat"] == 0 else None,
+            )
+        except _lnd_mod.LndError as exc:
+            self.store.finalize_outgoing_payment(tx_id, succeeded=False)
+            return {
+                "result_type": "pay_invoice",
+                "error": {"code": "PAYMENT_FAILED", "message": str(exc)},
+            }
+
+        settled_tx = self.store.finalize_outgoing_payment(
+            tx_id,
+            succeeded=True,
+            preimage=pay_res["preimage"],
+            fees_paid_msat=pay_res["fees_paid_msat"],
+        )
+        self._emit_notification(app_id, "payment_sent", settled_tx)
+        return {
+            "result_type": "pay_invoice",
+            "result": {
+                "preimage": pay_res["preimage"],
+                "fees_paid": pay_res["fees_paid_msat"],
+            },
+        }
+
+    def _pay_keysend_payload(
+        self, app: dict[str, Any], params: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Execute a single `pay_keysend` request (NWC-04) and build its payload."""
+        app_id = int(app["id"])
+        pubkey = str(params.get("pubkey") or "").strip().lower()
+        amount_msat = int(params.get("amount") or 0)
+        preimage_hex = str(params.get("preimage") or "").strip().lower()
+        tlv_records = params.get("tlv_records")
+        tlv_records = list(tlv_records) if isinstance(tlv_records, list) else []
+
+        if not pubkey or len(pubkey) != 66:
+            return {
+                "result_type": "pay_keysend",
+                "error": {"code": "OTHER", "message": "Missing or invalid pubkey"},
+            }
+        try:
+            bytes.fromhex(pubkey)
+        except ValueError:
+            return {
+                "result_type": "pay_keysend",
+                "error": {"code": "OTHER", "message": "Missing or invalid pubkey"},
+            }
+        if amount_msat <= 0:
+            return {
+                "result_type": "pay_keysend",
+                "error": {"code": "OTHER", "message": "Amount must be positive"},
+            }
+
+        # Fix the keysend preimage up front so the ledger's payment hash
+        # (sha256(preimage)) matches the payment LND actually sends.
+        if preimage_hex:
+            try:
+                bytes.fromhex(preimage_hex)
+            except ValueError:
+                return {
+                    "result_type": "pay_keysend",
+                    "error": {"code": "OTHER", "message": "Invalid preimage"},
+                }
+        else:
+            for rec in tlv_records:
+                if isinstance(rec, dict) and int(rec.get("type") or 0) == 5482373484:
+                    candidate = str(rec.get("value") or "").strip().lower()
+                    try:
+                        if len(bytes.fromhex(candidate)) == 32:
+                            preimage_hex = candidate
+                    except ValueError:
+                        pass
+                    break
+        if not preimage_hex:
+            preimage_hex = secrets.token_bytes(32).hex()
+        if len(preimage_hex) != 64:
+            return {
+                "result_type": "pay_keysend",
+                "error": {"code": "OTHER", "message": "Invalid preimage"},
+            }
+        payment_hash = hashlib.sha256(bytes.fromhex(preimage_hex)).hexdigest()
+
+        fee_reserve_msat = max(10_000, (amount_msat + 99) // 100)
+        tx_id, internal_payee_id = self.store.reserve_outgoing_payment(
+            app_id=app_id,
+            amount_msat=amount_msat,
+            fee_reserve_msat=fee_reserve_msat,
+            payment_hash=payment_hash,
+            invoice="",
+            description=f"Keysend to {pubkey[:16]}…",
+            description_hash="",
+        )
+        if internal_payee_id is not None:
+            payload = self._finish_internal_payment(
+                app_id, internal_payee_id, payment_hash
+            )
+            payload["result_type"] = "pay_keysend"
+            return payload
+
+        try:
+            pay_res = self.lnd.pay_keysend(
+                dest_pubkey_hex=pubkey,
+                amount_msat=amount_msat,
+                fee_limit_msat=fee_reserve_msat,
+                preimage_hex=preimage_hex,
+                tlv_records=tlv_records,
+            )
+        except _lnd_mod.LndError as exc:
+            self.store.finalize_outgoing_payment(tx_id, succeeded=False)
+            return {
+                "result_type": "pay_keysend",
+                "error": {"code": "PAYMENT_FAILED", "message": str(exc)},
+            }
+
+        settled_tx = self.store.finalize_outgoing_payment(
+            tx_id,
+            succeeded=True,
+            preimage=pay_res["preimage"],
+            fees_paid_msat=pay_res["fees_paid_msat"],
+        )
+        self._emit_notification(app_id, "payment_sent", settled_tx)
+        return {
+            "result_type": "pay_keysend",
+            "result": {
+                "preimage": pay_res["preimage"],
+                "fees_paid": pay_res["fees_paid_msat"],
+            },
+        }
+
+    def _finish_internal_payment(
+        self, app_id: int, internal_payee_id: int, payment_hash: str
+    ) -> dict[str, Any]:
+        """Complete a wallet-to-wallet settlement with a verifiable preimage.
+
+        The preimage is taken from the incoming ledger record; when missing it
+        is resolved from LND (the invoice was created on this node, so LND
+        knows its preimage even before external settlement) and recorded on
+        both ledger rows. Nothing is ever fabricated: clients verify
+        sha256(preimage) == payment_hash.
+        """
+        tx = self.store.find_tx_for_app(app_id, payment_hash=payment_hash)
+        preimage = (tx or {}).get("preimage") or ""
+        if not preimage:
+            try:
+                preimage = str(
+                    self.lnd.lookup_invoice(payment_hash).get("preimage") or ""
+                ).lower()
+            except _lnd_mod.LndError:
+                preimage = ""
+            if preimage:
+                self.store.set_preimage_for_hash(payment_hash, preimage)
+        if tx:
+            tx = dict(tx)
+            if preimage:
+                tx["preimage"] = preimage
+            self._emit_notification(app_id, "payment_sent", tx)
+        inc_tx = self.store.find_tx_for_app(
+            internal_payee_id, payment_hash=payment_hash
+        )
+        if inc_tx:
+            inc_tx = dict(inc_tx)
+            if preimage:
+                inc_tx["preimage"] = preimage
+            self._emit_notification(internal_payee_id, "payment_received", inc_tx)
+        return {
+            "result_type": "pay_invoice",
+            "result": {"preimage": preimage, "fees_paid": 0},
         }
 
     # ── Notifications & Relay Worker ───────────────────────────────

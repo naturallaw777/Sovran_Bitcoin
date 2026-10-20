@@ -114,6 +114,8 @@ Or declare it in NixOS configuration (`services.sovran-nwc.wallets` or `services
 
 Each wallet has an isolated connection. A limit caps lifetime spending; without `--limit-sats`/`limitSats`, it is receive-only. The CLI prints a `nostr+walletconnect://` pairing URI. For declared wallets it is stored, mode `0600`, at `/var/lib/albyhub/wallets/<alias>.pairing-uri`. Import it into the NWC connection flow in [Zeus](https://zeusln.com/blog/new-release-zeus-v0-10-0/) or [BitBanana](https://docs.bitbanana.app/setup/connect-a-hosted-wallet/nostr-wallet-connect-uri/). NWC is wallet access, not node management. Keep pairing URIs private.
 
+Spend-capable wallets can pay invoices and send keysend (spontaneous) payments — e.g. BitBanana's keysend button; receive-only wallets cannot spend at all. Spending works with LND 0.21 and newer. Existing wallet connections keep working after upgrades: pairing URIs, balances and limits are preserved, and spend-capable wallets gain keysend automatically — no re-pairing or wallet recreation needed.
+
 ### `nwc-wallet` commands
 
 | Command | Purpose |

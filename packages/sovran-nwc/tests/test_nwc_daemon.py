@@ -39,6 +39,7 @@ class FakeLndClient(lnd_mod.LndRestClient):
         self.channel_balance_msat = 500_000_000  # 500,000 sats
         self.invoices: dict[str, dict[str, Any]] = {}
         self.created_invoices: list[dict[str, Any]] = []
+        self.keysends: list[dict[str, Any]] = []
         self.next_payment_error: str | None = None
         self.next_fee_msat: int = 1_500
 
@@ -133,6 +134,35 @@ class FakeLndClient(lnd_mod.LndRestClient):
             raise lnd_mod.LndPaymentError(err)
         preimage = secrets.token_bytes(32)
         ph = hashlib.sha256(preimage).hexdigest()
+        return {
+            "preimage": preimage.hex(),
+            "payment_hash": ph,
+            "fees_paid_msat": self.next_fee_msat,
+        }
+
+    def pay_keysend(
+        self,
+        dest_pubkey_hex: str,
+        amount_msat: int,
+        fee_limit_msat: int,
+        preimage_hex: str = "",
+        tlv_records: list[dict[str, Any]] | None = None,
+    ) -> dict[str, Any]:
+        if self.next_payment_error:
+            err = self.next_payment_error
+            self.next_payment_error = None
+            raise lnd_mod.LndPaymentError(err)
+        preimage = bytes.fromhex(preimage_hex) if preimage_hex else secrets.token_bytes(32)
+        ph = hashlib.sha256(preimage).hexdigest()
+        self.keysends.append(
+            {
+                "dest": dest_pubkey_hex,
+                "amount_msat": int(amount_msat),
+                "fee_limit_msat": int(fee_limit_msat),
+                "preimage": preimage.hex(),
+                "tlv_records": list(tlv_records or []),
+            }
+        )
         return {
             "preimage": preimage.hex(),
             "payment_hash": ph,
