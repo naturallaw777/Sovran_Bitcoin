@@ -90,6 +90,11 @@ class LndRestClient:
                 f"Cannot read LND TLS certificate at {self.cert_file}",
             )
         ctx = ssl.create_default_context(cafile=self.cert_file)
+        # Pin the protocol floor explicitly: create_default_context() defaults
+        # to TLS 1.2+, and LND has supported TLS 1.2 since 0.4. Explicit here
+        # because py/insecure-protocol (CWE-327) cannot model the implicit
+        # default and flags the bare call.
+        ctx.minimum_version = ssl.TLSVersion.TLSv1_2
         # LND certs on 127.0.0.1 include IP:127.0.0.1 and DNS:localhost
         return ctx
 

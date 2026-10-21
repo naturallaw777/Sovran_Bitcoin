@@ -1637,7 +1637,7 @@ class SovranNwcDaemon:
                     "running": True,
                     "unlocked": True,
                     "backendType": "LND",
-                    "version": "sovran-nwc-2.0.0",
+                    "version": "sovran-nwc-2.0.1",
                 }
 
             if route == "/api/setup" and method == "POST":

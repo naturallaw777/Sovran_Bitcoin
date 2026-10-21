@@ -6,6 +6,27 @@ This project follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.1.2] - 2026-10-21
+
+### Changed
+
+- Refreshed the locked `nixpkgs` revision from `55bfb4d7` (2026-10-14) to
+  `02c087f3` (2026-10-20), still tracking `nixos-unstable`. The refresh carries
+  ~5,600 upstream commits, but every Nixpkgs-provided component of the stack
+  resolves to the same version as in `1.1.1`:
+  - `bitcoin`: `31.1`, `lnd`: `0.21.4-beta`, `lndinit`: `0.1.38-beta`,
+    `electrs`: `0.12.0`, `btcpayserver`: `2.4.5`, `nbxplorer`: `2.6.17`,
+    `tor`: `0.4.9.14` (unchanged; verified by diffing the package derivations
+    at both revisions).
+  - No Sovran module option, service default, or vendored package source
+    changed in this release. The refresh updates only transitive/propagated
+    inputs, so a rebuild is expected but no configuration migration is.
+- Bumped the vendored `sovran-nwc` package from `2.0.0` to `2.0.1`, reflecting
+  the payment-path fixes and the TLS context change below. The daemon now
+  reports `sovran-nwc-2.0.1` from `GET /api/info`.
+- Rewrote `README.md` in a tighter form and reordered the setup sections
+  (quick start, node access, NWC wallets); content and options are unchanged.
+
 ### Fixed
 
 - Fixed NWC spending failing with `Error Not Found` (HTTP 404) on LND 0.21+.
@@ -59,16 +80,54 @@ This project follows [Semantic Versioning](https://semver.org/).
 - Added `tests/test_followups.py` (internal preimage verification incl.
   legacy ledger rows, `multi_pay_*`/unknown-method rejection,
   keysend success/restriction/budget, `get_info` advertisement) and
-  keysend request-shape tests in `tests/test_lnd_rest_pay.py`.
+  keysend request-shape tests in `tests/test_lnd_rest_pay.py`. The NWC test
+  suite is now 45 tests.
 
 - Allow loopback IP traffic for `albyhub.service` while retaining nix-bitcoin's deny-by-default network hardening. The NWC daemon needs localhost access for its management API, LND REST, and Tor SOCKS proxy; without the allowlist, the service listened on `127.0.0.1:18080` but local clients timed out.
 - Force clearnet NWC relay URLs through the configured Tor SOCKS proxy when Tor is enabled. The daemon's default `wss://relay.getalby.com` endpoints were otherwise dialed directly and blocked by `IPAddressDeny=any`, so pairing URIs were generated but the wallet service never received client requests.
-- Fixed `electrs.service` startup failure on `electrs 0.12.0` (`Error: An unknown argument '--daemon-p2p-addr=127.0.0.1:8335' was specified.`):
-  - Removed the obsolete `--daemon-p2p-addr` CLI flag from `modules/electrs.nix` (dropped upstream in `electrs 0.12.0` when block indexing moved to `bindex`).
-  - Added `services.bitcoind.rest` (`rest=1` in `bitcoin.conf`) and enabled it automatically when `services.electrs.enable = true`, as required by `electrs 0.12.0` (`bindex`) for `/rest/blockhashbyheight/`, `/rest/headers/`, `/rest/block/`, `/rest/spenttxouts/`, and `/rest/blockpart/`.
-  - Added `submitpackage` to `modules/bitcoind-rpc-public-whitelist.nix` for `electrs 0.12.0` package broadcast support.
-  - Added a `preStart` check in `modules/electrs.nix` to detect and remove pre-`0.12.0` (`FixedPrefix.8` / format v0) RocksDB directories so upgrades from `electrs 0.10.x`/`0.11.x` automatically reindex instead of panicking on `Unsupported DB format (0 < 1)`.
-- Expanded `services.bitcoind.rpc.users.btcpayserver.rpcwhitelist` in `modules/btcpayserver.nix` to inherit `public.rpcwhitelist` (`validateaddress`, `testmempoolaccept`, `signrawtransactionwithkey`, `getblockfrompeer`, `getindexinfo`, etc.) plus NBXplorer/wallet methods (`generatetoaddress`, `signrawtransactionwithwallet`, `createwallet`, `loadwallet`, `importdescriptors`, etc.), resolving `bitcoind` RPC whitelist warnings during `nbxplorer` `ScanRPCCapabilitiesAsync` / `SupportTxIndex` / `EnsureWalletCreated` startup checks.
+- Fixed `nix flake check` failing to evaluate the `bitcoin-btcpay-hardening`
+  check with `error: string '$confFile)' doesn't represent an absolute path`
+  (`tests/bitcoin-btcpay-hardening.nix`). The check extracted the generated
+  `bitcoin.conf` path with a greedy `builtins.match ".*cat ([^ ]+).*"` against
+  `services.bitcoind.preStart`; since `modules/bitcoind.nix` also contains the
+  `$(cat $confFile)` config-reinstall guard, the greedy match picked the *last*
+  `cat` and returned the shell variable `$confFile)`, which `builtins.readFile`
+  rejects. The extraction now anchors on the `/nix/store/` path that
+  `cat ${configFile}` actually emits, and throws a readable error if it is ever
+  absent. Test-harness only — no service, option or runtime change. This check
+  had never evaluated, so no prior release exercised it.
+
+### Security
+
+- Cleared GitHub code scanning alert `py/insecure-protocol` (CWE-327) on
+  `ssl.create_default_context()` in `packages/sovran-nwc/nwc_nostr.py`. Python's
+  default context already floors at TLS 1.2, but the floor was implicit; both
+  outbound TLS contexts (`wss://` NWC relays and the LND REST client) now set
+  `minimum_version = ssl.TLSVersion.TLSv1_2` explicitly. Behaviour is unchanged
+  on Python 3.10+ — this pins the guarantee in code instead of leaving it to the
+  interpreter default, and makes the posture legible to static analysis.
+  Certificate and hostname verification were already on (`PROTOCOL_TLS_CLIENT`,
+  `CERT_REQUIRED`) and remain on. Added `tests/test_tls_posture.py` (4 tests) so
+  a future edit cannot silently drop the protocol floor.
+
+### Upgrade notes
+
+- No configuration migration is required. Refresh the flake input on the host
+  and rebuild:
+
+  ```bash
+  nix flake update sovran-bitcoin
+  sudo nixos-rebuild switch --flake .#myhost
+  ```
+
+- The `nixpkgs` refresh triggers a rebuild of the stack, but resolves to the
+  same package versions as `1.1.1`; if you pin `services.btcpayserver.package`
+  or `services.nbxplorer.package` explicitly, those pins still win.
+- Existing NWC pairings keep working: the `pay_invoice` spend scope now also
+  covers `pay_keysend`, so clients such as BitBanana gain keysend without
+  re-pairing, and no SQLite migration runs. Receive-only wallets stay
+  `RESTRICTED` for spending, and every keysend is still capped by wallet
+  balance and the monthly budget.
 
 ## [1.1.1] - 2026-10-18
 
@@ -114,6 +173,13 @@ This project follows [Semantic Versioning](https://semver.org/).
   redundant and is no longer set; `--limit-sats` now only funds the wallet.
 - `create_wallet` fetches the app after the funding transfer, so `create`
   reports the funded balance instead of `0`.
+
+- Fixed `electrs.service` startup failure on `electrs 0.12.0` (`Error: An unknown argument '--daemon-p2p-addr=127.0.0.1:8335' was specified.`):
+  - Removed the obsolete `--daemon-p2p-addr` CLI flag from `modules/electrs.nix` (dropped upstream in `electrs 0.12.0` when block indexing moved to `bindex`).
+  - Added `services.bitcoind.rest` (`rest=1` in `bitcoin.conf`) and enabled it automatically when `services.electrs.enable = true`, as required by `electrs 0.12.0` (`bindex`) for `/rest/blockhashbyheight/`, `/rest/headers/`, `/rest/block/`, `/rest/spenttxouts/`, and `/rest/blockpart/`.
+  - Added `submitpackage` to `modules/bitcoind-rpc-public-whitelist.nix` for `electrs 0.12.0` package broadcast support.
+  - Added a `preStart` check in `modules/electrs.nix` to detect and remove pre-`0.12.0` (`FixedPrefix.8` / format v0) RocksDB directories so upgrades from `electrs 0.10.x`/`0.11.x` automatically reindex instead of panicking on `Unsupported DB format (0 < 1)`.
+- Expanded `services.bitcoind.rpc.users.btcpayserver.rpcwhitelist` in `modules/btcpayserver.nix` to inherit `public.rpcwhitelist` (`validateaddress`, `testmempoolaccept`, `signrawtransactionwithkey`, `getblockfrompeer`, `getindexinfo`, etc.) plus NBXplorer/wallet methods (`generatetoaddress`, `signrawtransactionwithwallet`, `createwallet`, `loadwallet`, `importdescriptors`, etc.), resolving `bitcoind` RPC whitelist warnings during `nbxplorer` `ScanRPCCapabilitiesAsync` / `SupportTxIndex` / `EnsureWalletCreated` startup checks.
 
 ### Added
 
@@ -220,7 +286,8 @@ This project follows [Semantic Versioning](https://semver.org/).
 
 - Initial tagged release.
 
-[Unreleased]: https://github.com/naturallaw777/Sovran_Bitcoin/compare/1.1.1...HEAD
+[Unreleased]: https://github.com/naturallaw777/Sovran_Bitcoin/compare/1.1.2...HEAD
+[1.1.2]: https://github.com/naturallaw777/Sovran_Bitcoin/compare/1.1.1...1.1.2
 [1.1.1]: https://github.com/naturallaw777/Sovran_Bitcoin/compare/1.1.0...1.1.1
 [1.1.0]: https://github.com/naturallaw777/Sovran_Bitcoin/compare/1.0.3...1.1.0
 [1.0.3]: https://github.com/naturallaw777/Sovran_Bitcoin/compare/1.0.2...1.0.3

@@ -687,6 +687,23 @@ def _connect_socks5(
     return sock
 
 
+def _tls_context() -> ssl.SSLContext:
+    """TLS context for `wss://` relay and LNURL connections.
+
+    `ssl.create_default_context()` already yields `PROTOCOL_TLS_CLIENT` with
+    hostname checking and certificate verification, but its protocol floor is
+    implicit. Pin it to TLS 1.2 so the minimum is enforced by this code rather
+    than inferred from the interpreter version (`ssl.TLSVersion` needs 3.7+,
+    which is older than any Python this daemon supports). Static analysis
+    (`py/insecure-protocol`, CWE-327) cannot see the implicit default and
+    flags a bare `create_default_context()`, so this also keeps the scanner
+    honest about what is actually allowed.
+    """
+    ctx = ssl.create_default_context()
+    ctx.minimum_version = ssl.TLSVersion.TLSv1_2
+    return ctx
+
+
 class WebSocketConnection:
     """Thread-safe RFC 6455 client connection."""
 
@@ -726,8 +743,7 @@ class WebSocketConnection:
             raw_sock = socket.create_connection((host, port), timeout=self.timeout)
 
         if scheme == "wss":
-            ctx = ssl.create_default_context()
-            self._sock = ctx.wrap_socket(raw_sock, server_hostname=host)
+            self._sock = _tls_context().wrap_socket(raw_sock, server_hostname=host)
         else:
             self._sock = raw_sock
 

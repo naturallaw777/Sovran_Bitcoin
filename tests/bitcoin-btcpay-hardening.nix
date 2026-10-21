@@ -61,7 +61,20 @@ let
 
   nbxplorerConfigPath = extractAfter "install -m 600" nbxplorerPreStart;
   btcpayConfigPath = extractFlagValue "--conf" btcpayExecStart;
-  bitcoindConfigPath = extractAfter "cat" bitcoindPreStart;
+
+  # `builtins.match` is greedy, so a bare `cat ([^ ]+)` matches the *last* `cat`
+  # in the preStart — the `$(cat $confFile)` reinstall guard in
+  # modules/bitcoind.nix — and yields the shell variable `$confFile)`, which
+  # fails readFile with "doesn't represent an absolute path". Anchor on the
+  # /nix/store path that `cat ${configFile}` actually emits.
+  bitcoindConfigPath =
+    let
+      match = builtins.match ".*cat (/nix/store/[^ ]+).*" (normalize bitcoindPreStart);
+    in
+      if match == null then
+        throw "Unable to extract the bitcoind config store path from preStart: ${normalize bitcoindPreStart}"
+      else
+        builtins.head match;
 
   nbxplorerConfig = builtins.readFile nbxplorerConfigPath;
   btcpayConfig = builtins.readFile btcpayConfigPath;
