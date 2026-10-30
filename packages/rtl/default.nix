@@ -8,13 +8,21 @@
 , fetchurl
 , makeWrapper
 }:
+let
+  # RTL 0.15.15+ requires the October 2026 Node.js security fixes. A host
+  # consuming the overlay may use a different nixpkgs than this flake's pin.
+  supportedNode = node:
+    lib.versions.major node.version == "22" && lib.versionAtLeast node.version "22.23.4";
+in
+assert lib.assertMsg (supportedNode nodejs_22 && supportedNode nodejs-slim_22)
+  "RTL requires Node.js 22.23.4 or newer in the 22.x series; update nixpkgs.";
 let self = stdenvNoCC.mkDerivation {
   pname = "rtl";
-  version = "0.15.13";
+  version = "0.15.16";
 
   src = fetchurl {
     url = "https://github.com/Ride-The-Lightning/RTL/archive/refs/tags/v${self.version}.tar.gz";
-    hash = "sha256-3buB9owSQOYlNH42w6jPbu5uEgCO1ikBQHOBVHgK3Qk=";
+    hash = "sha256-aVQzez5DE0UjZ1B2vBvclF8XqntuupXOUPawTFRzW1o=";
   };
 
   passthru = {
@@ -26,7 +34,7 @@ let self = stdenvNoCC.mkDerivation {
       # TODO-EXTERNAL: Remove `npmFlags` when no longer required
       # See: https://github.com/Ride-The-Lightning/RTL/issues/1182
       npmFlags = "--legacy-peer-deps";
-      hash = "sha256-dFnOTtpSzz9CXvs7I50CTi6p5HS/cbxBSJHJh2pqcLc=";
+      hash = "sha256-/tkwdBoNpr6y+RqbufgO1h6SPCO26yqcu2zaeToyQOU=";
     };
   };
 

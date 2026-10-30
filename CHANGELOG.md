@@ -8,6 +8,16 @@ This project follows [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- Updated the vendored Ride The Lightning package from `0.15.13` to `0.15.16`
+  (upstream's `v0.15.16` release is titled `0.15.16-beta`), refreshing the
+  source and production dependency hashes. This includes security and
+  dependency fixes, `/rtl`-scoped cookies, and the LND channel-backup fixes
+  introduced in `0.15.14`.
+- RTL now requires Node.js `22.23.4` or newer in the 22.x series. The flake's
+  pinned nixpkgs already meets this; systems importing the overlay with their
+  own nixpkgs must update it if the package rejects an older Node version.
+  RTL's block explorer URL is no longer editable in its UI; configure the
+  `BLOCK_EXPLORER_URL` environment variable instead when overriding the default.
 - Updated vendored Mempool (`mempool-backend`, `mempool-frontend`) from `3.3.1`
   to `3.3.2` and aligned its build/runtime toolchain with upstream's Node.js 26
   bump (`nodejs_26` / `nodejs-slim_26`), allowing `mempool-frontend`'s

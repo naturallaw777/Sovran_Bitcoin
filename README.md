@@ -150,6 +150,8 @@ services.sovran-lnurl.domain = "pay.example.com"; # required for lnurl
 
 Dependencies are automatic: BTCPay enables NBXplorer, Postgres and a least-privilege LND macaroon; LNURL enables NWC; Mempool enables Electrs and txindex. Features get onion services. The bitcoind wallet is disabled by default and re-enabled automatically for BTCPay/NBXplorer.
 
+RTL requires Node.js 22.23.4 or newer in the 22.x series. The locked nixpkgs meets this requirement; when using the overlay with another nixpkgs, update that nixpkgs if it supplies an older Node version. RTL's block explorer is no longer editable in the UI; to override its default, set `systemd.services.rtl.environment.BLOCK_EXPLORER_URL` to a trusted, reachable endpoint consistent with your Tor policy.
+
 ## Networking and customization
 
 The flake deliberately stops at loopback. Put your own web server (nginx, Caddy, etc.) in front for clearnet/TLS:
