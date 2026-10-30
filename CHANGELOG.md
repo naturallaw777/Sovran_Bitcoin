@@ -6,6 +6,19 @@ This project follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- Updated vendored Mempool (`mempool-backend`, `mempool-frontend`) from `3.3.1`
+  to `3.3.2` and aligned its build/runtime toolchain with upstream's Node.js 26
+  bump (`nodejs_26` / `nodejs-slim_26`), allowing `mempool-frontend`'s
+  `fetchNodeModules` to run strict `npm ci` without `--legacy-peer-deps`.
+  Refreshed `mempool/mining-pool-logos` frontend assets (adding light-theme
+  `.light.svg` variants and newer pool logos), refreshed context in
+  `0001-allow-disabling-mining-pool-fetching.patch`, and set
+  `NODE_OPTIONS="--max-old-space-size=4096"` during the localized Angular
+  frontend build so <=4 GiB RAM builders with swap do not hit V8's default
+  half-RAM heap cap.
+
 ## [1.1.2] - 2026-10-21
 
 ### Changed

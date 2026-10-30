@@ -2,8 +2,8 @@
 # This local copy does not fetch or import nix-bitcoin.
 { lib
 , stdenvNoCC
-, nodejs_22
-, nodejs-slim_22
+, nodejs_26
+, nodejs-slim_26
 , fetchFromGitHub
 , fetchNodeModules
 , runCommand
@@ -18,41 +18,34 @@
 , napi-rs-cli
 }:
 rec {
-  nodejs = nodejs_22;
-  nodejsRuntime = nodejs-slim_22;
+  nodejs = nodejs_26;
+  nodejsRuntime = nodejs-slim_26;
 
-  version = "3.3.1";
+  version = "3.3.2";
 
   src = fetchFromGitHub {
     owner = "mempool";
     repo = "mempool";
     tag = "v${version}";
-    hash = "sha256-Py+ou6xwgentp1PNluDNPjw+gdWM3HxWVPHewuo/5hE=";
+    hash = "sha256-xMMBr3bSOwVNgpjOPVf7MEcGvhhNneTsE8PH9sLUr30=";
   };
 
   nodeModules = {
     frontend = fetchNodeModules {
       inherit src nodejs;
       sourceRoot = "source/frontend";
-      # v3.3.1's frontend/package-lock.json (lockfileVersion 2) omits the
-      # optional/peer chokidar@4 + readdirp@4 entries that newer npm (as
-      # shipped by nodejs_22 here) expects to see, so a plain `npm ci`
-      # rejects the lockfile as out of sync. `--legacy-peer-deps` sidesteps
-      # npm's stricter peer-dep resolution, same workaround already used
-      # for RTL above (see Ride-The-Lightning/RTL#1182).
-      npmFlags = "--legacy-peer-deps";
-      hash = "sha256-uSRauud9sOgxG59fJvv5hieFHs3Pi6asV/L1slheDS0=";
+      hash = "sha256-LRK2W5Ypml5QSTWTHtUpilDXm5gIt13wL0pGBgkhhvk=";
     };
     backend = fetchNodeModules {
       inherit src nodejs;
       sourceRoot = "source/backend";
-      hash = "sha256-guVPIjYRvReyGZ6JHDDuYWEZvsP6lVH22qzIwl2WogA=";
+      hash = "sha256-jszxFq1+H9D0p0NNB6q0iFoVy2gLAmdlnzPDK8ywJo0=";
     };
   };
 
   frontendAssets = fetchFiles {
     name = "mempool-frontend-assets";
-    hash = "sha256-r6GfOY8Pdh15o2OQMk8syfvWMV6WMCReToAEkQm7tqQ=";
+    hash = "sha256-TdO7ycxrYKJhoqzjMITNg31u1Ka2zG92rK0UwOQr8gE=";
     fetcher = ./frontend-assets-fetch.sh;
   };
 
@@ -119,7 +112,10 @@ rec {
         'ng -- build --configuration production --localize' \
         'ng -- build --configuration production --localize --progress=false'
 
-      CI=true TERM=dumb npm run build
+      # Raise V8's heap limit explicitly: on <=4 GiB RAM builders V8 defaults
+      # max-old-space-size to ~half of physical RAM, aborting Angular's
+      # localized production build with an OOM even when swap is available.
+      CI=true TERM=dumb NODE_OPTIONS="--max-old-space-size=4096" npm run build
 
       # Add assets that would otherwise be downloaded by sync-assets.js
       ${sync} ${frontendAssets}/ dist/mempool/browser/resources
