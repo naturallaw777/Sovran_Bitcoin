@@ -6,28 +6,83 @@ This project follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.1.3] - 2026-10-30
+
 ### Changed
 
+- Refreshed the locked `nixpkgs` revision from `02c087f3` (2026-10-20) to
+  `31ecbaca` (2026-10-27), tracking `nixos-unstable` (~5,590 upstream commits),
+  updating Nixpkgs-provided stack and runtime components:
+  - `btcpayserver`: `2.4.5` → `2.4.6`
+  - `nodejs_22` / `nodejs-slim_22` (used by `rtl`): `22.23.3` → `22.23.4`
+  - `nodejs_26` / `nodejs-slim_26` (used by `mempool`): `26.12.0` → `26.12.1`
+  - Unchanged Nixpkgs-provided stack components: `bitcoin` `31.1`, `lnd`
+    `0.21.4-beta`, `lndinit` `0.1.38-beta`, `electrs` `0.12.0`, `nbxplorer`
+    `2.6.17`, and `tor` `0.4.9.14` (vendored `sovran-nwc` remains `2.0.1`).
 - Updated the vendored Ride The Lightning package from `0.15.13` to `0.15.16`
   (upstream's `v0.15.16` release is titled `0.15.16-beta`), refreshing the
   source and production dependency hashes. This includes security and
-  dependency fixes, `/rtl`-scoped cookies, and the LND channel-backup fixes
-  introduced in `0.15.14`.
+  dependency fixes, `/rtl`-scoped cookies, multi-node session isolation and LND
+  channel-backup fixes introduced in `0.15.14`, and extended `tests/rtl.nix`
+  smoke checks covering the Node.js runtime assertion, `/` → `/rtl/` redirect,
+  `/rtl`-scoped cookies, CSRF enforcement, login, and logout.
 - RTL now requires Node.js `22.23.4` or newer in the 22.x series. The flake's
-  pinned nixpkgs already meets this; systems importing the overlay with their
-  own nixpkgs must update it if the package rejects an older Node version.
-  RTL's block explorer URL is no longer editable in its UI; configure the
-  `BLOCK_EXPLORER_URL` environment variable instead when overriding the default.
+  pinned `nixpkgs` meets this (`22.23.4`); systems importing the overlay with
+  their own `nixpkgs` must update it if the package rejects an older Node
+  version. RTL's block explorer URL is no longer editable in its UI; configure
+  the `BLOCK_EXPLORER_URL` environment variable (`systemd.services.rtl.environment.BLOCK_EXPLORER_URL`)
+  instead when overriding the default.
 - Updated vendored Mempool (`mempool-backend`, `mempool-frontend`) from `3.3.1`
   to `3.3.2` and aligned its build/runtime toolchain with upstream's Node.js 26
   bump (`nodejs_26` / `nodejs-slim_26`), allowing `mempool-frontend`'s
   `fetchNodeModules` to run strict `npm ci` without `--legacy-peer-deps`.
-  Refreshed `mempool/mining-pool-logos` frontend assets (adding light-theme
-  `.light.svg` variants and newer pool logos), refreshed context in
-  `0001-allow-disabling-mining-pool-fetching.patch`, and set
-  `NODE_OPTIONS="--max-old-space-size=4096"` during the localized Angular
+  Refreshed `mempool/mining-pool-logos` frontend assets (`53972ebbd` →
+  `72a6819f9`, adding light-theme `.light.svg` variants and newer pool logos),
+  refreshed context in `0001-allow-disabling-mining-pool-fetching.patch`, and
+  set `NODE_OPTIONS="--max-old-space-size=4096"` during the localized Angular
   frontend build so <=4 GiB RAM builders with swap do not hit V8's default
   half-RAM heap cap.
+
+### Security
+
+- Updated the Node.js runtimes for RTL (`22.23.4`) and Mempool (`26.12.1`) to
+  the October 2026 security releases, fixing the Brotli decoder out-of-bounds
+  write (`CVE-2026-111497`) and distrusting certificates affected by the
+  eMudhra intermediate-CA compromise. `packages/rtl/default.nix` asserts
+  `nodejs_22 >= 22.23.4` at evaluation time so overlay consumers on an older
+  host `nixpkgs` fail closed instead of running on an unpatched runtime.
+- Ride The Lightning `0.15.16` scopes `_csrf`, `XSRF-TOKEN`, and `connect.sid`
+  cookies to `Path=/rtl` rather than `Path=/`, locks block explorer URL
+  configuration to server-side config / `BLOCK_EXPLORER_URL`, isolates
+  per-node session state (`0.15.14`), and refreshes npm dependencies to clear
+  upstream Dependabot alerts.
+- BTCPay Server `2.4.6` hardens restricted API key permission scoping
+  (including administrator-owned keys), requires CSRF-protected `POST` requests
+  for `/logout`, enforces absolute HTTP/HTTPS redirect URLs on API key
+  authorization and invoice creation, tightens custom HTML/CSS sanitization,
+  and strengthens input validation across Payjoin, webhooks, subscriptions, and
+  public forms.
+
+### Upgrade notes
+
+- Refresh the flake input on the host and rebuild:
+
+  ```bash
+  nix flake update sovran-bitcoin
+  sudo nixos-rebuild switch --flake .#myhost
+  ```
+
+- If you import `overlays.default` (`overlays.sovran-bitcoin`) against your own
+  `nixpkgs` input rather than using the flake's locked `nixpkgs`, ensure that
+  `nixpkgs` provides `nodejs_22` `>= 22.23.4` (and `nodejs_26` /
+  `nodejs-slim_26` if building Mempool); `packages/rtl` rejects older `22.x`
+  builds at evaluation time.
+- RTL's block explorer URL is now read-only in the UI. To override the default,
+  set `systemd.services.rtl.environment.BLOCK_EXPLORER_URL` to an endpoint
+  consistent with your Tor policy.
+- BTCPay Server `2.4.6` removes the legacy per-invoice `notificationEmail`
+  field; configure merchant email rules on the store instead if you previously
+  relied on per-invoice notification emails.
 
 ## [1.1.2] - 2026-10-21
 
@@ -309,7 +364,8 @@ This project follows [Semantic Versioning](https://semver.org/).
 
 - Initial tagged release.
 
-[Unreleased]: https://github.com/naturallaw777/Sovran_Bitcoin/compare/1.1.2...HEAD
+[Unreleased]: https://github.com/naturallaw777/Sovran_Bitcoin/compare/1.1.3...HEAD
+[1.1.3]: https://github.com/naturallaw777/Sovran_Bitcoin/compare/1.1.2...1.1.3
 [1.1.2]: https://github.com/naturallaw777/Sovran_Bitcoin/compare/1.1.1...1.1.2
 [1.1.1]: https://github.com/naturallaw777/Sovran_Bitcoin/compare/1.1.0...1.1.1
 [1.1.0]: https://github.com/naturallaw777/Sovran_Bitcoin/compare/1.0.3...1.1.0
