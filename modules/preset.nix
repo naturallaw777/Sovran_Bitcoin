@@ -175,6 +175,19 @@ in {
       client.enable = true;
     };
 
+    # ── Kernel limits ────────────────────────────────────────────────
+    # nix-bitcoin-derived stacks are known to exhaust the inotify watch
+    # ceiling on long-running nodes (roughly eleven days uptime in one
+    # documented case), surfacing as
+    #   Failed to add a watch for /run/systemd/ask-password: inotify watch limit reached
+    # The historical leaker is NBXplorer's .NET configuration watcher.
+    # A plain (non-mkDefault) definition: recent nixpkgs already sets this
+    # to 524288 via mkDefault in nixos/modules/config/sysctl.nix, and an
+    # equal-priority mkDefault here would conflict at eval time; plain
+    # wins over mkDefault on every nixpkgs, including older host nixpkgs
+    # where the stock ceiling is still 8192. Override with mkForce if needed.
+    boot.kernel.sysctl."fs.inotify.max_user_watches" = 524288;
+
     # ── Secrets / operator / nodeinfo ─────────────────────────────────
     nix-bitcoin.generateSecrets = true;
     # Hide service command lines from non-privileged users via D-Bus

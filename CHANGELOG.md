@@ -21,6 +21,16 @@ This project follows [Semantic Versioning](https://semver.org/).
   `LimitNOFILE = 65536`. Runtime-only change: no reindex, no version
   migration, and existing installs need no action — it takes effect on the
   next service restart.
+- Raised `boot.kernel.sysctl."fs.inotify.max_user_watches"` to `524288` in
+  the preset, addressing `Failed to add a watch for
+  /run/systemd/ask-password: inotify watch limit reached` on long-running
+  nodes. The historical leaker in nix-bitcoin-derived stacks is NBXplorer's
+  .NET configuration watcher (hit at roughly eleven days uptime in one
+  documented case). Recent `nixos-unstable` already ships `524288` as an
+  `mkDefault` in `nixos/modules/config/sysctl.nix`; the preset sets it at
+  plain priority so overlay consumers on older host nixpkgs (stock ceiling
+  8192) are covered too, without an eval-time conflict against the
+  upstream `mkDefault`.
 
 ### Documentation
 
