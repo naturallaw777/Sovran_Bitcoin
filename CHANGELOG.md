@@ -6,6 +6,30 @@ This project follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- Raised electrs's file-descriptor ceiling by setting
+  `systemd.services.electrs.serviceConfig.LimitNOFILE = 65536` (with
+  `lib.mkForce`) in `modules/electrs.nix`. RocksDB (upstream default
+  `max_open_files = -1`) keeps one open descriptor per `.sst` file; the
+  electrs 0.12 (bindex) mainnet index runs to thousands of them (7,873 at the
+  time of writing), while systemd's default soft `NOFILE` limit is 1024.
+  Descriptor exhaustion made `blockchain.scripthash.subscribe` fail with
+  `Too many open files`, aborting every Sparrow/Electrum wallet load with
+  `Failed to subscribe to paths`. Verified by a new assertion in
+  `tests/bitcoin-btcpay-hardening.nix` that the evaluated unit sets
+  `LimitNOFILE = 65536`. Runtime-only change: no reindex, no version
+  migration, and existing installs need no action — it takes effect on the
+  next service restart.
+
+### Documentation
+
+- Added a Troubleshooting section to the README covering the Sparrow
+  `Failed to subscribe to paths` symptom, its `Too many open files` root
+  cause in the electrs journal, the `LimitNOFILE` fix, and how to verify the
+  *soft* limit via `/proc/<pid>/limits` rather than
+  `systemctl show -p LimitNOFILE` (which reports the hard limit).
+
 ## [1.1.3] - 2026-10-30
 
 ### Changed

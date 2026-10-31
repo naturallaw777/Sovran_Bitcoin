@@ -58,6 +58,7 @@ let
   btcpayWorkingDir = config.systemd.services.btcpayserver.serviceConfig.WorkingDirectory;
   electrsExecStart = config.systemd.services.electrs.serviceConfig.ExecStart;
   electrsPreStart = config.systemd.services.electrs.preStart;
+  electrsLimitNoFile = config.systemd.services.electrs.serviceConfig.LimitNOFILE;
 
   nbxplorerConfigPath = extractAfter "install -m 600" nbxplorerPreStart;
   btcpayConfigPath = extractFlagValue "--conf" btcpayExecStart;
@@ -160,6 +161,9 @@ assert lib.assertMsg
     && lib.elem "createwallet" config.services.bitcoind.rpc.users.btcpayserver.rpcwhitelist
     && lib.hasInfix "prefix_extractor=rocksdb" electrsPreStart)
   "electrs 0.12.0 and btcpayserver RPC whitelist must include all required methods";
+assert lib.assertMsg
+  (electrsLimitNoFile == 65536)
+  "electrs LimitNOFILE must be 65536 (RocksDB keeps one fd per .sst file; the index holds thousands)";
 pkgs.runCommand "bitcoin-btcpay-hardening" {} ''
   mkdir -p /build/secrets /build/nbxplorer
 

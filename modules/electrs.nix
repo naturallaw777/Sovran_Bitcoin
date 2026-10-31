@@ -100,6 +100,18 @@ in {
         Restart = "on-failure";
         RestartSec = "10s";
         ReadWritePaths = [ cfg.dataDir ];
+        # RocksDB (with max_open_files = -1, the upstream default) keeps one
+        # open file descriptor per .sst file in the index. The electrs 0.12
+        # (bindex) mainnet index runs to thousands of .sst files (7,873 at the
+        # time of writing), while systemd's default soft NOFILE limit is 1024.
+        # Under that default, descriptor exhaustion makes
+        # `blockchain.scripthash.subscribe` fail ("Too many open files"), which
+        # aborts every Sparrow/Electrum wallet load with
+        # "Failed to subscribe to paths". 65536 comfortably covers the SST
+        # files plus sockets, threads and RPC connections. mkForce so no module
+        # default can silently win. Runtime-only: no reindex, and it takes
+        # effect on the next service restart.
+        LimitNOFILE = lib.mkForce 65536;
       } // nbLib.allowedIPAddresses cfg.tor.enforce;
     };
 

@@ -201,6 +201,34 @@ At activation, the one-shot `setup-secrets` service writes generated secrets to 
 
 **Back up this directory.** Losing it—or the LND seed at `~lnd data dir/lnd-seed-mnemonic` (mode `0600`)—can mean losing funds or access. To manage secrets yourself, set `nix-bitcoin.generateSecrets = false;` and review `modules/nix-bitcoin/secrets/secrets.nix`.
 
+## Troubleshooting
+
+### Sparrow fails with "Failed to subscribe to paths"
+
+If Sparrow (or another Electrum wallet) aborts on load with
+`Failed to subscribe to paths: [m/0/0-...]`, check the electrs journal:
+
+```
+journalctl -u electrs -f
+```
+
+A `Too many open files` error there points at the root cause: RocksDB keeps
+one file descriptor per `.sst` file in the electrs index (thousands of files
+on mainnet with electrs 0.12's bindex engine), but systemd's default soft
+`LimitNOFILE` is 1024. Descriptor exhaustion makes
+`blockchain.scripthash.subscribe` — the RPC call wallets use to load — fail.
+The stack fixes this by setting
+`systemd.services.electrs.serviceConfig.LimitNOFILE = 65536;`
+(`modules/electrs.nix`). No reindex or other operator action is required; the
+limit takes effect on the next electrs restart (or the next rebuild-and-switch,
+which restarts the unit). Verify the soft limit actually applied with
+`grep -i 'open files' /proc/$(systemctl show -p MainPID --value electrs)/limits`
+(first column must read 65536 — `systemctl show -p LimitNOFILE` reports the
+*hard* limit and can look correct even when the soft limit is the problem).
+
+Note: `modules/nix-bitcoin/versioning.nix` is a stub in this vendored stack —
+there is no `nix-bitcoin.configVersion` migration to run for this change.
+
 ## Differences from Sovran SystemsOS
 
 - Data stays under `/var/lib`; no `/run/media/Second_Drive/...` paths.
