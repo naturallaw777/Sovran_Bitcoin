@@ -122,7 +122,13 @@ in {
       wants = [ "albyhub.service" ];
 
       environment = env // {
-        NWC_UNLOCK_PASSWORD_FILE = "${albyhub.dataDir}/unlock-password";
+        # Credential split: this file holds the *invoice-scoped* secret (see
+        # NWC_INVOICE_PASSWORD_FILE in modules/albyhub.nix), NOT the daemon's
+        # unlock password. The daemon enforces the scope from the credential
+        # itself, so this unit cannot mint a `full` token even if compromised.
+        # AlbyHubManager reads whichever file this variable names and presents
+        # its contents to /api/unlock.
+        NWC_UNLOCK_PASSWORD_FILE = "${albyhub.dataDir}/lnurl-api-password";
       } // (optionalAttrs (lnurlCfg.domain != null) {
         NWC_LNURL_DOMAIN = lnurlCfg.domain;
       }) // (optionalAttrs (lnurlCfg.domainFile != null) {
@@ -139,8 +145,9 @@ in {
         ExecStart = "${lnurlCfg.package}/bin/nwc-lnurl";
         Restart = "on-failure";
         RestartSec = "10s";
-        # Loopback-only egress: the full hub token in memory must not be able to
-        # pivot to the wider network if the process is compromised.
+        # Loopback-only egress: the invoice-scoped hub token in memory must
+        # not be able to pivot to the wider network if the process is
+        # compromised.
         IPAddressAllow = nbLib.allowLocalIPAddresses.IPAddressAllow;
         UMask = "0027";
         NoNewPrivileges = true;
@@ -150,7 +157,9 @@ in {
         ReadOnlyPaths = [
           lndCfg.certPath
           "/run/lnd"
-          "${albyhub.dataDir}/unlock-password"
+          # Only the invoice-scoped credential — the unlock password is
+          # deliberately absent so this unit cannot even read it.
+          "${albyhub.dataDir}/lnurl-api-password"
         ] ++ optional (lnurlCfg.domainFile != null) (toString lnurlCfg.domainFile);
         # Re-mount the audit log writable inside the sandbox; everything else
         # stays read-only (ProtectSystem = "strict").

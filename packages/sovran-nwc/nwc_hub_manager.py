@@ -275,6 +275,13 @@ class AlbyHubManager:
         #   - "invoice" for the public-facing `nwc-lnurl` service (can only
         #               resolve aliases and mint incoming BOLT11 invoices)
         #   - "read"    for read-only inspection
+        # The scope is enforced by the daemon based on *which credential* is
+        # presented, not on this request: `nwc-lnurl` holds a dedicated
+        # invoice-scoped secret (see NWC_INVOICE_PASSWORD_FILE in nwc_daemon)
+        # and could not obtain a `full` token even by asking for one — the
+        # daemon answers 403. The `permission` field is therefore a
+        # declaration of intent that must match the credential, and the CLI's
+        # unlock password remains the only full-authority secret.
         info = self._request("GET", "/api/info", timeout=10)
         if info.get("running"):
             resp = self._request(

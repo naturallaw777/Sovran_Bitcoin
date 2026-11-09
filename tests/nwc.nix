@@ -66,6 +66,13 @@ assert lib.assertMsg (builtins.length nwcUnit.serviceConfig.ExecStartPost == 1)
   "declarative wallets must attach the ExecStartPost provisioning script";
 assert lib.assertMsg (lnurlUnit.environment.NWC_HUB_PERMISSION == "invoice")
   "nwc-lnurl must use the least-privilege 'invoice' token scope, not 'full'";
+assert lib.assertMsg (lnurlUnit.environment.NWC_UNLOCK_PASSWORD_FILE == "${cfg.services.albyhub.dataDir}/lnurl-api-password")
+  "nwc-lnurl must present the invoice-scoped credential file, not the unlock password";
+assert lib.assertMsg (!(builtins.elem "${cfg.services.albyhub.dataDir}/unlock-password" lnurlUnit.serviceConfig.ReadOnlyPaths)
+  && builtins.elem "${cfg.services.albyhub.dataDir}/lnurl-api-password" lnurlUnit.serviceConfig.ReadOnlyPaths)
+  "nwc-lnurl must not be able to read the daemon unlock password, only its scoped credential";
+assert lib.assertMsg (nwcUnit.environment.NWC_INVOICE_PASSWORD_FILE == "${cfg.services.albyhub.dataDir}/lnurl-api-password")
+  "the NWC daemon must bind the 'invoice' scope to the LNURL service's scoped credential";
 pkgs.runCommand "sovran-bitcoin-nwc" {} ''
   echo ok > $out
 ''

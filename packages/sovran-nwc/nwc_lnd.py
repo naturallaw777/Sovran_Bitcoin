@@ -217,9 +217,8 @@ class LndRestClient:
             "expires_at": now + int(expiry),
         }
 
-    def lookup_invoice(self, payment_hash_hex: str) -> dict[str, Any]:
-        r_hash_hex = payment_hash_hex.strip().lower()
-        resp = self.request("GET", f"/v1/invoice/{r_hash_hex}", timeout=15)
+    @staticmethod
+    def _normalize_invoice(resp: dict[str, Any], payment_hash_hex: str) -> dict[str, Any]:
         raw_state = str(resp.get("state") or "").upper()
         if raw_state == "SETTLED" or resp.get("settled") is True:
             state = "settled"
@@ -255,7 +254,7 @@ class LndRestClient:
             except Exception:
                 pass
         return {
-            "payment_hash": r_hash_hex,
+            "payment_hash": payment_hash_hex.strip().lower(),
             "invoice": str(resp.get("payment_request") or ""),
             "state": state,
             "amount_msat": amt_msat,
@@ -266,6 +265,67 @@ class LndRestClient:
             "description_hash": desc_hash_hex,
             "preimage": preimage_hex,
         }
+
+    def lookup_invoice(self, payment_hash_hex: str) -> dict[str, Any]:
+        r_hash_hex = payment_hash_hex.strip().lower()
+        resp = self.request("GET", f"/v1/invoice/{r_hash_hex}", timeout=15)
+        return self._normalize_invoice(resp, r_hash_hex)
+
+    def list_invoices(
+        self,
+        num_max_invoices: int = 100,
+        index_offset: int = 0,
+        pending_only: bool = False,
+        reversed: bool = False,
+    ) -> dict[str, Any]:
+        """One page of LND's invoice table (`lnrpc.ListInvoices`).
+
+        Used to reconcile the whole pending-invoice set with a constant
+        number of REST calls instead of one `LookupInvoice` per pending
+        ledger row every watcher tick. Returns normalized invoices plus the
+        pagination offsets LND reports.
+        """
+        qs = urllib.parse.urlencode(
+            {
+                "pending_only": "true" if pending_only else "false",
+                "num_max_invoices": str(int(num_max_invoices)),
+                "index_offset": str(int(index_offset)),
+                "reversed": "true" if reversed else "false",
+            }
+        )
+        resp = self.request("GET", f"/v1/invoices?{qs}", timeout=20)
+        invoices: list[dict[str, Any]] = []
+        for item in resp.get("invoices") or []:
+            if not isinstance(item, dict):
+                continue
+            r_hash_b64 = str(item.get("r_hash") or "")
+            try:
+                payment_hash = base64.b64decode(r_hash_b64).hex()
+            except Exception:
+                continue
+            if not payment_hash:
+                continue
+            normalized = self._normalize_invoice(item, payment_hash)
+            normalized["add_index"] = int(item.get("add_index") or 0)
+            invoices.append(normalized)
+        return {
+            "invoices": invoices,
+            "last_index_offset": int(resp.get("last_index_offset") or 0),
+            "first_index_offset": int(resp.get("first_index_offset") or 0),
+        }
+
+    def cancel_invoice(self, payment_hash_hex: str) -> dict[str, Any]:
+        """Cancel an OPEN invoice (`invoicesrpc.CancelInvoice`).
+
+        A canceled invoice can never settle, which is what makes it safe to
+        stop watching it: no late external payment can land on the node
+        uncredited to a sub-wallet.
+        """
+        r_hash = bytes.fromhex(payment_hash_hex.strip().lower())
+        body = {
+            "payment_hash": base64.b64encode(r_hash).decode("ascii"),
+        }
+        return self.request("POST", "/v2/invoices/cancel", body=body, timeout=15)
 
     def decode_payreq(self, bolt11: str) -> dict[str, Any]:
         quoted = urllib.parse.quote(bolt11.strip(), safe="")

@@ -9,6 +9,9 @@ Nix-native Python daemon using only the Python 3 standard library:
       * `full`    — wallet creation, transfers, drain, delete (`nwc-wallet` CLI)
       * `invoice` — alias lookup and incoming invoice creation only (`nwc-lnurl` service)
       * `read`    — read-only inspection
+    Scopes are bound to *credentials*, not to what a caller requests: the
+    unlock password may mint any scope, while a scoped credential (e.g. the
+    invoice-only secret held by `nwc-lnurl`) can only mint its own.
 """
 
 from __future__ import annotations
@@ -101,6 +104,12 @@ NIP47_RATE_LIMIT_PER_MIN = int(os.environ.get("NWC_NIP47_RATE_LIMIT", "60"))
 MAX_INVOICE_EXPIRY_SEC = int(os.environ.get("NWC_MAX_INVOICE_EXPIRY", "604800"))
 # Bound on API/NIP-47 page sizes so one caller cannot force an unbounded scan.
 MAX_PAGE_SIZE = 500
+# Cap on simultaneously-pending incoming invoices per wallet. Every pending
+# ledger row is also an OPEN invoice in LND's invoice table (a node-global,
+# ~1000-entry resource shared with RTL/BTCPay), so an uncapped wallet (or the
+# public LNURL path) could exhaust it. Expired invoices stop counting as soon
+# as the watcher sweeps them. `0` disables the cap.
+MAX_PENDING_INVOICES_PER_WALLET = int(os.environ.get("NWC_MAX_PENDING_INVOICES", "200"))
 
 
 def _as_int(value: Any, default: int | None = None) -> int | None:
@@ -499,6 +508,26 @@ class NwcStore:
             cur = self._conn.cursor()
             cur.execute("BEGIN IMMEDIATE")
             try:
+                # Race-proof backstop for the per-wallet pending cap (the
+                # daemon pre-checks before creating the LND invoice, so this
+                # only fires when two creators race past the pre-check).
+                if MAX_PENDING_INVOICES_PER_WALLET > 0:
+                    pending_count = int(
+                        cur.execute(
+                            """
+                            SELECT COUNT(*) AS n FROM sovran_transactions
+                            WHERE app_id = ? AND type = 'incoming' AND state = 'pending'
+                            """,
+                            (int(app_id),),
+                        ).fetchone()["n"]
+                    )
+                    if pending_count >= MAX_PENDING_INVOICES_PER_WALLET:
+                        raise NwcStoreError(
+                            "QUOTA_EXCEEDED",
+                            "Too many pending invoices for this wallet; "
+                            "wait for some to settle or expire",
+                            429,
+                        )
                 cur.execute(
                     """
                     INSERT INTO sovran_transactions (
@@ -603,6 +632,61 @@ class NwcStore:
                     """
                 ).fetchall()
             return [self._row_to_tx_dict(r) for r in rows]
+
+    def pending_incoming_count(self, app_id: int) -> int:
+        """Number of pending (unsettled, unexpired) incoming invoices a wallet holds."""
+        with self._lock:
+            row = self._conn.execute(
+                """
+                SELECT COUNT(*) AS n FROM sovran_transactions
+                WHERE app_id = ? AND type = 'incoming' AND state = 'pending'
+                """,
+                (int(app_id),),
+            ).fetchone()
+            return int(row["n"])
+
+    def close_incoming_by_payment_hash(
+        self, payment_hash: str, state: str = "expired"
+    ) -> dict[str, Any] | None:
+        """Transition a *pending* incoming invoice to a terminal closed state.
+
+        Only `pending -> expired` happens here (invoice expiry, or LND-side
+        cancellation). Settlement has its own path
+        (`settle_incoming_by_payment_hash`) because it moves money; a row that
+        already settled is never closed by this method, so a settle racing the
+        expiry sweep always wins. Returns the updated row, or None when the
+        invoice was not pending.
+        """
+        if state not in ("expired", "failed"):
+            raise ValueError(f"invalid closed state: {state}")
+        ph = payment_hash.strip().lower()
+        with self._lock:
+            cur = self._conn.cursor()
+            cur.execute("BEGIN IMMEDIATE")
+            try:
+                row = cur.execute(
+                    """
+                    SELECT * FROM sovran_transactions
+                    WHERE payment_hash = ? AND type = 'incoming' AND state = 'pending'
+                    ORDER BY id DESC LIMIT 1
+                    """,
+                    (ph,),
+                ).fetchone()
+                if row is None:
+                    cur.execute("COMMIT")
+                    return None
+                cur.execute(
+                    "UPDATE sovran_transactions SET state = ? WHERE id = ?",
+                    (state, int(row["id"])),
+                )
+                cur.execute("COMMIT")
+                updated = self._conn.execute(
+                    "SELECT * FROM sovran_transactions WHERE id = ?", (int(row["id"]),)
+                ).fetchone()
+                return self._row_to_tx_dict(updated)
+            except Exception:
+                cur.execute("ROLLBACK")
+                raise
 
     def find_tx_for_app(
         self, app_id: int, payment_hash: str = "", invoice: str = ""
@@ -992,10 +1076,33 @@ class SovranNwcDaemon:
         unlock_password: str,
         relays: list[str] | None = None,
         tor_socks_proxy: str | None = None,
+        scoped_passwords: dict[str, str] | None = None,
     ) -> None:
         self.store = store
         self.lnd = lnd
         self._unlock_password = unlock_password
+        # Scoped credentials: permission -> password for credentials that must
+        # never be able to mint anything above their own scope (e.g. the
+        # invoice-only secret the internet-facing LNURL service holds). The
+        # permission a token gets is decided by *which secret was presented*,
+        # never by what the caller asks for. A scoped entry identical to the
+        # unlock password is dropped: it would silently be a second full
+        # credential, which is exactly the confusion this split exists to kill.
+        self._scoped_passwords: dict[str, str] = {}
+        for perm, pw in (scoped_passwords or {}).items():
+            perm_norm = str(perm).strip().lower()
+            secret = str(pw or "").strip()
+            if perm_norm not in ("invoice", "read") or not secret:
+                continue
+            if hmac.compare_digest(
+                secret.encode("utf-8"), (unlock_password or "").strip().encode("utf-8")
+            ):
+                logger.warning(
+                    "Ignoring scoped '%s' credential: identical to the unlock password",
+                    perm_norm,
+                )
+                continue
+            self._scoped_passwords[perm_norm] = secret
         self.relays = [
             r.strip()
             for r in (relays or ["wss://relay.getalby.com", "wss://relay2.getalby.com"])
@@ -1017,18 +1124,52 @@ class SovranNwcDaemon:
     # ── Token authentication & authorization ───────────────────────
 
     def issue_token(self, password: str, permission: str = "full") -> str:
-        if not self._unlock_password or not hmac.compare_digest(
-            password.strip().encode("utf-8"),
-            self._unlock_password.strip().encode("utf-8"),
+        token, _granted, _kind = self._issue_token(password, permission)
+        return token
+
+    def _issue_token(
+        self, password: str, permission: str = "full"
+    ) -> tuple[str, str, str]:
+        """Mint a bearer token; returns `(token, granted_permission, credential)`.
+
+        The presented password decides the ceiling: the unlock password may
+        mint any scope (including deliberately lesser ones, e.g. a read-only
+        token for monitoring), while a scoped credential may mint *only* its
+        own scope — asking for anything else is a 403, not a silent clamp, so
+        a misconfigured least-privilege client fails loudly instead of
+        quietly running with different authority than its operator intended.
+        """
+        presented = (password or "").strip().encode("utf-8")
+        ceiling: str | None = None
+        credential = ""
+        if self._unlock_password and hmac.compare_digest(
+            presented, self._unlock_password.strip().encode("utf-8")
         ):
+            ceiling, credential = "full", "unlock"
+        else:
+            for perm, secret in self._scoped_passwords.items():
+                if hmac.compare_digest(presented, secret.encode("utf-8")):
+                    ceiling, credential = perm, f"scoped:{perm}"
+                    break
+        if ceiling is None:
             raise NwcStoreError("unauthorized", "Invalid unlock password", 401)
-        perm = permission.strip().lower() if permission else "full"
-        if perm not in ("full", "read", "invoice"):
-            perm = "full"
+
+        requested = (permission or "").strip().lower()
+        if requested not in ("full", "read", "invoice"):
+            requested = ceiling
+        if ceiling != "full" and requested != ceiling:
+            raise NwcStoreError(
+                "forbidden",
+                f"This credential can only issue '{ceiling}' tokens, not '{requested}'",
+                403,
+            )
         token = secrets.token_urlsafe(32)
         with self._tokens_lock:
-            self._tokens[token] = perm
-        return token
+            self._tokens[token] = requested
+        _audit_mod.audit_log(
+            "api_token_issued", permission=requested, credential=credential
+        )
+        return token, requested, credential
 
     def verify_token(self, auth_header: str | None, required: set[str]) -> str:
         if not auth_header or not auth_header.startswith("Bearer "):
@@ -1048,15 +1189,112 @@ class SovranNwcDaemon:
 
     # ── Pending invoice reconciliation against LND ─────────────────
 
+    def _ensure_pending_capacity(self, app_id: int) -> None:
+        """Refuse new invoices once a wallet holds the pending cap.
+
+        Checked *before* the LND invoice is created so a refused request does
+        not leave an orphan OPEN invoice in LND's node-global invoice table.
+        `NwcStore.record_incoming_invoice` re-checks atomically as a backstop.
+        """
+        if MAX_PENDING_INVOICES_PER_WALLET <= 0:
+            return
+        if self.store.pending_incoming_count(app_id) >= MAX_PENDING_INVOICES_PER_WALLET:
+            raise NwcStoreError(
+                "QUOTA_EXCEEDED",
+                "Too many pending invoices for this wallet; "
+                "wait for some to settle or expire",
+                429,
+            )
+
+    def _lnd_invoice_states(
+        self, payment_hashes: list[str]
+    ) -> dict[str, dict[str, Any]]:
+        """Current LND state for many invoices, batched where possible.
+
+        Prefers paginated `ListInvoices` (a constant number of REST calls per
+        sweep, independent of how many ledger rows are pending) and falls
+        back to one `LookupInvoice` per hash for clients without it. Hashes
+        LND does not report are simply absent from the result — callers treat
+        them as "unknown this round" and retry on the next sweep.
+        """
+        wanted = {h.strip().lower() for h in payment_hashes if h}
+        if not wanted:
+            return {}
+        list_fn = getattr(self.lnd, "list_invoices", None)
+        if callable(list_fn):
+            try:
+                found: dict[str, dict[str, Any]] = {}
+                offset = 0
+                # 50 pages x 200 = 10k invoices of headroom; Sovran nodes
+                # sit far below LND's practical invoice-table size.
+                for _ in range(50):
+                    page = list_fn(
+                        num_max_invoices=200, index_offset=offset, pending_only=False
+                    )
+                    invoices = page.get("invoices") or []
+                    for inv in invoices:
+                        ph = str(inv.get("payment_hash") or "").lower()
+                        if ph in wanted:
+                            found[ph] = inv
+                    if len(found) >= len(wanted):
+                        break
+                    last = int(page.get("last_index_offset") or 0)
+                    if not invoices or last <= offset:
+                        break
+                    offset = last
+                return found
+            except _lnd_mod.LndError:
+                pass  # fall through to per-hash lookups
+        found = {}
+        for ph in wanted:
+            try:
+                found[ph] = self.lnd.lookup_invoice(ph)
+            except _lnd_mod.LndError:
+                continue
+        return found
+
+    def _cancel_lnd_invoice(self, payment_hash: str, reason: str, app_id: int) -> bool:
+        """Best-effort LND invoice cancellation; returns True on success.
+
+        Cancellation is what makes closing an invoice in the ledger safe: a
+        canceled invoice can never settle later, so no payment can land on
+        the node uncredited to a sub-wallet after we stop watching it.
+        """
+        cancel_fn = getattr(self.lnd, "cancel_invoice", None)
+        if not callable(cancel_fn):
+            return False
+        try:
+            cancel_fn(payment_hash)
+        except _lnd_mod.LndError as exc:
+            logger.warning(
+                "Failed to cancel LND invoice %s (%s): %s", payment_hash, reason, exc
+            )
+            return False
+        _audit_mod.audit_log(
+            "nwc_invoice_canceled",
+            app_id=app_id,
+            payment_hash=payment_hash,
+            reason=reason,
+        )
+        return True
+
     def reconcile_pending_invoices(self, app_id: int | None = None) -> None:
         pending = self.store.list_pending_incoming(app_id=app_id)
+        if not pending:
+            return
+        states = self._lnd_invoice_states(
+            [str(tx.get("paymentHash") or "") for tx in pending]
+        )
+        now = int(time.time())
         for tx in pending:
             ph = tx.get("paymentHash") or ""
             if not ph:
                 continue
-            try:
-                lnd_inv = self.lnd.lookup_invoice(ph)
-            except _lnd_mod.LndError:
+            lnd_inv = states.get(ph)
+            if lnd_inv is None:
+                # Unknown this round (LND unreachable or not reporting it):
+                # leave the row pending and retry next sweep rather than
+                # guessing — expiring on a guess could orphan a real payment.
                 continue
             if lnd_inv["state"] == "settled":
                 settled_tx, newly_settled = self.store.settle_incoming_by_payment_hash(
@@ -1069,6 +1307,34 @@ class SovranNwcDaemon:
                     self._emit_notification(
                         int(settled_tx["appId"]), "payment_received", settled_tx
                     )
+                continue
+            if lnd_inv["state"] == "failed":
+                # Canceled (or otherwise closed) on the LND side.
+                closed = self.store.close_incoming_by_payment_hash(ph, "expired")
+                if closed:
+                    _audit_mod.audit_log(
+                        "nwc_invoice_expired",
+                        app_id=int(tx["appId"]),
+                        payment_hash=ph,
+                        reason="lnd_canceled",
+                    )
+                continue
+            # Still OPEN in LND: expire only once the BOLT11 expiry has
+            # passed, and cancel on LND *first* so the invoice can never
+            # settle after we stop watching it. If the cancel fails (e.g. a
+            # payment is racing us), leave the row pending; the next sweep
+            # will see the settled state and credit it.
+            expires_at = tx.get("expires_at") or lnd_inv.get("expires_at") or 0
+            if expires_at and now >= int(expires_at):
+                if self._cancel_lnd_invoice(ph, "expired", int(tx["appId"])):
+                    closed = self.store.close_incoming_by_payment_hash(ph, "expired")
+                    if closed:
+                        _audit_mod.audit_log(
+                            "nwc_invoice_expired",
+                            app_id=int(tx["appId"]),
+                            payment_hash=ph,
+                            reason="expired",
+                        )
 
     # ── NIP-47 Request Processor ───────────────────────────────────
 
@@ -1401,6 +1667,9 @@ class SovranNwcDaemon:
                     }
                 desc = str(params.get("description") or "")
                 desc_hash = str(params.get("description_hash") or "")
+                # Refuse before touching LND once the wallet holds the
+                # pending cap (checked again atomically by the store).
+                self._ensure_pending_capacity(app_id)
                 # Client-chosen expiry is bounded: an unbounded (`expiry`=2**31)
                 # invoice would sit OPEN in LND's invoice table indefinitely.
                 expiry = _bounded(params.get("expiry"), 3600, 1, MAX_INVOICE_EXPIRY_SEC)
@@ -1736,6 +2005,16 @@ class SovranNwcDaemon:
             if preimage:
                 inc_tx["preimage"] = preimage
             self._emit_notification(internal_payee_id, "payment_received", inc_tx)
+            # The ledger has settled this invoice internally, but the LND
+            # invoice is still OPEN: anyone holding the bolt11 could pay it
+            # externally and the funds would land on the node credited to
+            # nobody (the ledger row is already settled, so reconciliation
+            # would never credit a second time). Cancel it on LND so it can
+            # never settle again. Best-effort: the internal settlement above
+            # stands either way, and a failed cancel is logged + audited.
+            self._cancel_lnd_invoice(
+                payment_hash, "internal_settlement", internal_payee_id
+            )
         return {
             "result_type": "pay_invoice",
             "result": {"preimage": preimage, "fees_paid": 0},
@@ -1917,7 +2196,7 @@ class SovranNwcDaemon:
                     "running": True,
                     "unlocked": True,
                     "backendType": "LND",
-                    "version": "sovran-nwc-2.0.1",
+                    "version": "sovran-nwc-2.1.0",
                 }
 
             if route == "/api/setup" and method == "POST":
@@ -1926,8 +2205,10 @@ class SovranNwcDaemon:
             if route in ("/api/unlock", "/api/start") and method == "POST":
                 pw = str((body or {}).get("unlockPassword") or "")
                 perm = str((body or {}).get("permission") or "full")
-                token = self.issue_token(pw, permission=perm)
-                return 200, {"token": token, "permission": perm}
+                token, granted, _kind = self._issue_token(pw, permission=perm)
+                # Report the permission actually granted (decided by which
+                # credential was presented), not the one the caller asked for.
+                return 200, {"token": token, "permission": granted}
 
             # Health / node status (allowed for full, read, invoice)
             if route == "/api/node/status" and method == "GET":
@@ -2056,6 +2337,7 @@ class SovranNwcDaemon:
                 app = self.store.get_app(to_app_id)
                 if app is None:
                     return 404, {"error": "Target app not found"}
+                self._ensure_pending_capacity(to_app_id)
 
                 inv = self.lnd.create_invoice(
                     amount_msat=amt_msat,
@@ -2202,6 +2484,29 @@ def main() -> None:
     relays = [r.strip() for r in relay_env.split(",") if r.strip()]
     tor_proxy = os.environ.get("NWC_TOR_SOCKS_PROXY", "").strip() or None
 
+    # Scoped credentials (optional): each file holds a secret that may only
+    # ever mint tokens of its own scope, no matter what the caller requests.
+    # The LNURL service gets the invoice-scoped file instead of the unlock
+    # password, so compromising the internet-facing unit no longer yields
+    # full ledger authority.
+    scoped_passwords: dict[str, str] = {}
+    for perm, env_var in (
+        ("invoice", "NWC_INVOICE_PASSWORD_FILE"),
+        ("read", "NWC_READ_PASSWORD_FILE"),
+    ):
+        scoped_path = os.environ.get(env_var, "").strip()
+        if scoped_path:
+            scoped_secret = _read_secret_file(scoped_path)
+            if scoped_secret:
+                scoped_passwords[perm] = scoped_secret
+            else:
+                logger.warning(
+                    "%s=%s is set but unreadable/empty; scoped '%s' login disabled",
+                    env_var,
+                    scoped_path,
+                    perm,
+                )
+
     store = NwcStore(db_path)
     lnd = _lnd_mod.LndRestClient(
         rest_url=lnd_rest_url,
@@ -2214,6 +2519,7 @@ def main() -> None:
         unlock_password=password,
         relays=relays,
         tor_socks_proxy=tor_proxy,
+        scoped_passwords=scoped_passwords,
     )
     daemon.start_background_workers()
 
