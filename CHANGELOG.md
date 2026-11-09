@@ -6,40 +6,28 @@ This project follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
-### Fixed
+## [1.2.0] - 2026-11-09
 
-- Sovran NWC (`sovran-nwc` 2.2.2): `get_info.pubkey` is sent in 33-byte
-  compressed form. Since 2.0.1 the field carried the wallet's 64-character
-  x-only key, but rust-nostr 0.43 — the NWC stack in BitBanana <= 1.1.x —
-  types it as `secp256k1::PublicKey`, whose JSON deserializer accepts only a
-  33-byte compressed (66 hex) or 65-byte uncompressed key. An x-only key makes
-  the *entire* response fail (`Can't deserialize response: response={...}`),
-  which the app reports as a connection failure while every other method —
-  including the daemon's own replies — is fine. This is why 2.2.1 (method
-  advertisement only) did not restore BitBanana. The key still identifies the
-  wallet, not the LND node, so the node-identity leak the x-only form was
-  introduced to prevent stays closed. Clients that read x-only (Zeus) are
-  unaffected: they take the 33-byte form or fall back to the pairing pubkey.
-  Added `WireTypeCompatibilityTest` in `tests/test_client_compat.py` pinning
-  the field to a compressed key.
+### Changed
 
-### Fixed
-
-- Sovran NWC (`sovran-nwc` 2.2.1): `get_info.methods` and the method list in
-  the kind-13194 info event no longer advertise extension methods
-  (`lookup_payment` from NWC-09, `get_budget` from NWC-13) by default.
-  BitBanana speaks NIP-47 through rust-nostr `nostr-sdk` 0.43, whose `Method`
-  enum is closed and has no `serde(other)` fallback, so a single unknown name
-  makes the *entire* `get_info` response fail to deserialize and the app
-  reports a broken connection — while Zeus, which ignores unknown names,
-  kept working. That asymmetry is why 2.2.0 broke only BitBanana. Both
-  methods remain fully callable and stay discoverable through the
-  `extensions` tag (`09`, `13`), which is what extension-aware clients read.
-  Operators whose clients all understand them can restore the advertisement
-  with `services.albyhub.advertiseExtensionMethods = true` (or
-  `NWC_ADVERTISE_EXTENSION_METHODS=1`). Added `tests/test_client_compat.py`
-  (6 tests) pinning the advertisement to names every deployed client knows,
-  and asserted the module default in `tests/nwc.nix`.
+- Refreshed the locked `nixpkgs` revision from `31ecbaca` (2026-10-27) to
+  `f4a03c0` (2026-11-07), tracking `nixos-unstable`, updating Nixpkgs-provided
+  stack and runtime components:
+  - `bitcoin` (Bitcoin Core): `31.1` → `32.1` — a major upstream release; see
+    Upgrade notes.
+  - `lnd`: `0.21.4-beta` → `0.21.6-beta`
+  - `btcpayserver`: `2.4.6` → `2.4.7`
+  - `tor`: `0.4.9.14` → `0.4.9.16`
+  - `nodejs_26` / `nodejs-slim_26` (used by `mempool`): `26.12.1` → `26.13.0`
+  - `python3` (used by `sovran-nwc`): `3.14.8` → `3.14.10`
+  - Unchanged: `electrs` `0.12.0`, `nbxplorer` `2.6.17`, `lndinit`
+    `0.1.38-beta`, `nodejs_22` `22.23.4`, `openssl` `3.5.9`.
+- Updated the vendored Ride The Lightning package from `0.15.16` to `0.15.17`
+  (upstream release 2026-11-06), refreshing the source and production
+  dependency hashes. The local root-redirect patch was dropped now that
+  upstream redirects requests into `/rtl/` itself (preserving upstream
+  query-string handling), and the RTL regression checks now also verify that
+  logout expires the session and both CSRF cookies at `Path=/rtl`.
 
 ### Added
 
@@ -85,7 +73,38 @@ This project follows [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
-- Raised electrs's file-descriptor ceiling by setting
+- Sovran NWC (`sovran-nwc` 2.2.2): `get_info.pubkey` is sent in 33-byte
+  compressed form. Since 2.0.1 the field carried the wallet's 64-character
+  x-only key, but rust-nostr 0.43 — the NWC stack in BitBanana <= 1.1.x —
+  types it as `secp256k1::PublicKey`, whose JSON deserializer accepts only a
+  33-byte compressed (66 hex) or 65-byte uncompressed key. An x-only key makes
+  the *entire* response fail (`Can't deserialize response: response={...}`),
+  which the app reports as a connection failure while every other method —
+  including the daemon's own replies — is fine. This is why 2.2.1 (method
+  advertisement only) did not restore BitBanana. The key still identifies the
+  wallet, not the LND node, so the node-identity leak the x-only form was
+  introduced to prevent stays closed. Clients that read x-only (Zeus) are
+  unaffected: they take the 33-byte form or fall back to the pairing pubkey.
+  Added `WireTypeCompatibilityTest` in `tests/test_client_compat.py` pinning
+  the field to a compressed key.
+
+- Sovran NWC (`sovran-nwc` 2.2.1): `get_info.methods` and the method list in
+  the kind-13194 info event no longer advertise extension methods
+  (`lookup_payment` from NWC-09, `get_budget` from NWC-13) by default.
+  BitBanana speaks NIP-47 through rust-nostr `nostr-sdk` 0.43, whose `Method`
+  enum is closed and has no `serde(other)` fallback, so a single unknown name
+  makes the *entire* `get_info` response fail to deserialize and the app
+  reports a broken connection — while Zeus, which ignores unknown names,
+  kept working. That asymmetry is why 2.2.0 broke only BitBanana. Both
+  methods remain fully callable and stay discoverable through the
+  `extensions` tag (`09`, `13`), which is what extension-aware clients read.
+  Operators whose clients all understand them can restore the advertisement
+  with `services.albyhub.advertiseExtensionMethods = true` (or
+  `NWC_ADVERTISE_EXTENSION_METHODS=1`). Added `tests/test_client_compat.py`
+  (6 tests) pinning the advertisement to names every deployed client knows,
+  and asserted the module default in `tests/nwc.nix`.
+
+'s file-descriptor ceiling by setting
   `systemd.services.electrs.serviceConfig.LimitNOFILE = 65536` (with
   `lib.mkForce`) in `modules/electrs.nix`. RocksDB (upstream default
   `max_open_files = -1`) keeps one open descriptor per `.sst` file; the
@@ -109,6 +128,33 @@ This project follows [Semantic Versioning](https://semver.org/).
   8192) are covered too, without an eval-time conflict against the
   upstream `mkDefault`.
 
+### Upgrade notes
+
+- Refresh the flake input on the host and rebuild:
+
+  ```bash
+  nix flake update sovran-bitcoin
+  sudo nixos-rebuild switch --flake .#myhost
+  ```
+
+- **Bitcoin Core 32.1 is a major-version upgrade** (from 31.1). Back up the
+  bitcoind data directory and wallet before switching, and give the node a
+  runtime smoke test (sync, wallet, RPC) before relying on it; if you need
+  to roll back across a major version, restore from the backup rather than
+  assuming downgrade compatibility.
+- Sovran NWC 2.1.0 splits the LNURL service onto its own invoice-scoped
+  credential: `/var/lib/albyhub/lnurl-api-password` is generated
+  automatically on the first daemon start after the upgrade, and no manual
+  migration is needed. Bearer tokens are in-memory, so the restart drops
+  previously issued ones; managers re-authenticate on their own and pairing
+  URIs are unaffected.
+- Sovran NWC 2.2.0's `get_budget` answers `RESTRICTED` for wallet
+  connections created before this release until the wallet is re-created;
+  `lookup_payment`, NIP-42 relay authentication, and the BitBanana
+  compatibility fixes in 2.2.1/2.2.2 need no action.
+- The electrs `LimitNOFILE` raise and the `fs.inotify.max_user_watches`
+  raise take effect on service restart; no operator action is required.
+
 ### Documentation
 
 - Dropped the Sparrow `Failed to subscribe to paths` troubleshooting section
@@ -117,6 +163,8 @@ This project follows [Semantic Versioning](https://semver.org/).
   the limit by hand, read the *soft* value from `/proc/<pid>/limits`;
   `systemctl show -p LimitNOFILE` reports the hard limit and can look correct
   when the soft limit is the problem.
+- Trimmed the README to the operator path (install → connect a wallet →
+  operate), moving release detail to this changelog where it belongs.
 
 ## [1.1.3] - 2026-10-30
 
@@ -476,7 +524,8 @@ This project follows [Semantic Versioning](https://semver.org/).
 
 - Initial tagged release.
 
-[Unreleased]: https://github.com/naturallaw777/Sovran_Bitcoin/compare/1.1.3...HEAD
+[Unreleased]: https://github.com/naturallaw777/Sovran_Bitcoin/compare/1.2.0...HEAD
+[1.2.0]: https://github.com/naturallaw777/Sovran_Bitcoin/compare/1.1.3...1.2.0
 [1.1.3]: https://github.com/naturallaw777/Sovran_Bitcoin/compare/1.1.2...1.1.3
 [1.1.2]: https://github.com/naturallaw777/Sovran_Bitcoin/compare/1.1.1...1.1.2
 [1.1.1]: https://github.com/naturallaw777/Sovran_Bitcoin/compare/1.1.0...1.1.1
