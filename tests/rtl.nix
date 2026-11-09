@@ -1,5 +1,5 @@
 # Config-level assertions and a packaged RTL startup/login smoke test.
-# The UI is served under /rtl/; `/` is redirected there in the package.
+# The UI is served under /rtl/; `/` is redirected there by upstream RTL.
 { nixpkgs, overlay, system ? "x86_64-linux" }:
 
 let
@@ -69,8 +69,8 @@ assert lib.assertMsg (node.authentication.macaroonPath == "/var/lib/rtl/macaroon
   "macaroonPath must be the copied-macaroon directory";
 assert lib.assertMsg (!(node.authentication ? boltzMacaroonPath) && !(node.settings ? boltzServerUrl))
   "RTL v0.15.13 removed Boltz settings";
-assert lib.assertMsg (lib.versionAtLeast rtlPackage.version "0.15.16")
-  "the default RTL package must include the 0.15.16 security fixes";
+assert lib.assertMsg (lib.versionAtLeast rtlPackage.version "0.15.17")
+  "the default RTL package must include the 0.15.17 login and logout fixes";
 assert lib.assertMsg (lib.versionAtLeast rtlPackage.nodejsRuntime.version "22.23.4")
   "RTL must use a Node.js runtime with the October 2026 security fixes";
 assert lib.assertMsg (!(builtins.tryEval (rtlPackage.override { nodejs_22 = oldBuildNode; })).success)
@@ -115,7 +115,7 @@ pkgs.runCommand "sovran-bitcoin-rtl" {
   trap cleanup EXIT
   base="http://127.0.0.1:$port"
 
-  # The patched root route must lead to the Angular base path.
+  # The upstream root route must lead to the Angular base path.
   curl -fs --retry 20 --retry-connrefused --retry-delay 1 --retry-max-time 20 \
     -D "$state/root.headers" -o /dev/null "$base/"
   tr -d '\r' < "$state/root.headers" > "$state/root.clean"
@@ -147,9 +147,17 @@ pkgs.runCommand "sovran-bitcoin-rtl" {
     -H 'Content-Type: application/json' -H "X-XSRF-TOKEN: $csrf" \
     --data "$login" "$base/rtl/api/authenticate" > "$state/login.json"
   jq -e '(.token | type) == "string" and (.token | length) > 0' "$state/login.json" > /dev/null
-  curl -fsS -b "$state/cookies" -H 'Content-Type: application/json' \
+  curl -fsS -b "$state/cookies" -c "$state/logout.cookies" \
+    -D "$state/logout.headers" -H 'Content-Type: application/json' \
     -H "X-XSRF-TOKEN: $csrf" --data '{}' "$base/rtl/api/authenticate/logout" \
     | jq -e '.loggedout == true' > /dev/null
+
+  # Logout must delete all three cookies at the same path used to set them.
+  tr -d '\r' < "$state/logout.headers" > "$state/logout.clean"
+  for cookie in 'connect[.]sid' '_csrf' 'XSRF-TOKEN'; do
+    grep -Eiq "^Set-Cookie: $cookie=; Path=/rtl;.*Expires=Thu, 01 Jan 1970" "$state/logout.clean"
+  done
+  test -z "$(awk '$6 == "connect.sid" || $6 == "_csrf" || $6 == "XSRF-TOKEN" { print $6 }' "$state/logout.cookies")"
 
   echo ok > "$out"
 ''

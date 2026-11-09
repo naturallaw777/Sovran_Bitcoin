@@ -18,11 +18,11 @@ assert lib.assertMsg (supportedNode nodejs_22 && supportedNode nodejs-slim_22)
   "RTL requires Node.js 22.23.4 or newer in the 22.x series; update nixpkgs.";
 let self = stdenvNoCC.mkDerivation {
   pname = "rtl";
-  version = "0.15.16";
+  version = "0.15.17";
 
   src = fetchurl {
     url = "https://github.com/Ride-The-Lightning/RTL/archive/refs/tags/v${self.version}.tar.gz";
-    hash = "sha256-aVQzez5DE0UjZ1B2vBvclF8XqntuupXOUPawTFRzW1o=";
+    hash = "sha256-BOC+9PnfW1uJZpH+3+1c7W2aRk7tjbHWSnURy6eFelY=";
   };
 
   passthru = {
@@ -34,7 +34,7 @@ let self = stdenvNoCC.mkDerivation {
       # TODO-EXTERNAL: Remove `npmFlags` when no longer required
       # See: https://github.com/Ride-The-Lightning/RTL/issues/1182
       npmFlags = "--legacy-peer-deps";
-      hash = "sha256-/tkwdBoNpr6y+RqbufgO1h6SPCO26yqcu2zaeToyQOU=";
+      hash = "sha256-nwdcGBUGxrWlEORJojkSN+8uLrLEeW8G80VQY0Igx1c=";
     };
   };
 
@@ -44,16 +44,7 @@ let self = stdenvNoCC.mkDerivation {
 
   phases = "unpackPhase patchPhase installPhase";
 
-  # The prebuilt Angular app uses <base href="/rtl/"> and PathLocationStrategy.
-  # Express still catch-all-serves index.html at `/`, so a visit to the
-  # documented loopback URL or the onion vhost (port 80 → RTL) boots Angular
-  # on `/` and renders a blank page. Send `/` to `/rtl/` before the API mount.
-  postPatch = ''
-    substituteInPlace backend/utils/app.js \
-      --replace-fail \
-      "this.app.use(this.common.baseHref + '/api', sharedRoutes);" \
-      "this.app.get('/', (req, res) => res.redirect(this.common.baseHref + '/')); this.app.use(this.common.baseHref + '/api', sharedRoutes);"
-  '';
+  # RTL 0.15.17 handles redirects into /rtl/ upstream.
 
   # `src` already contains the precompiled frontend and backend.
   # Copy all files required for packaging, like in
