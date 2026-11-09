@@ -111,11 +111,12 @@ This project follows [Semantic Versioning](https://semver.org/).
 
 ### Documentation
 
-- Added a Troubleshooting section to the README covering the Sparrow
-  `Failed to subscribe to paths` symptom, its `Too many open files` root
-  cause in the electrs journal, the `LimitNOFILE` fix, and how to verify the
-  *soft* limit via `/proc/<pid>/limits` rather than
-  `systemctl show -p LimitNOFILE` (which reports the hard limit).
+- Dropped the Sparrow `Failed to subscribe to paths` troubleshooting section
+  from the README: the `LimitNOFILE` fix above ships in the module and needs
+  no operator action, so this changelog entry is the record. When verifying
+  the limit by hand, read the *soft* value from `/proc/<pid>/limits`;
+  `systemctl show -p LimitNOFILE` reports the hard limit and can look correct
+  when the soft limit is the problem.
 
 ## [1.1.3] - 2026-10-30
 
