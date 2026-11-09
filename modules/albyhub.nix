@@ -101,6 +101,23 @@ let
       '';
     };
 
+    advertiseExtensionMethods = mkOption {
+      type = types.bool;
+      default = false;
+      description = ''
+        Advertise extension methods (`lookup_payment` from NWC-09,
+        `get_budget` from NWC-13) in `get_info.methods` and in the kind-13194
+        info event.
+
+        Off by default for client compatibility: the rust-nostr NWC client
+        used by BitBanana <= 1.1.x deserializes `methods` into a closed enum,
+        so a single unknown name makes the whole `get_info` response fail and
+        the app reports a broken connection. Those clients discover the
+        extensions through the `extensions` tag instead. The methods remain
+        callable either way; this only controls the advertisement.
+      '';
+    };
+
     user = mkOption {
       type = types.str;
       default = "albyhub";
@@ -271,6 +288,8 @@ in {
         LND_CERT_FILE = lndCertPath;
         LND_MACAROON_FILE = "/run/lnd/albyhub.macaroon";
         RELAY = cfg.relay;
+        # Client-compatibility advertisement (see the option description).
+        NWC_ADVERTISE_EXTENSION_METHODS = if cfg.advertiseExtensionMethods then "1" else "0";
       } // optionalAttrs config.services.tor.client.enable {
         NWC_TOR_SOCKS_PROXY = config.nix-bitcoin.torClientAddressWithPort;
         # The default public relays use wss://, but defaultHardening blocks

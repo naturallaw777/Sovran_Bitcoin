@@ -6,6 +6,24 @@ This project follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- Sovran NWC (`sovran-nwc` 2.2.1): `get_info.methods` and the method list in
+  the kind-13194 info event no longer advertise extension methods
+  (`lookup_payment` from NWC-09, `get_budget` from NWC-13) by default.
+  BitBanana speaks NIP-47 through rust-nostr `nostr-sdk` 0.43, whose `Method`
+  enum is closed and has no `serde(other)` fallback, so a single unknown name
+  makes the *entire* `get_info` response fail to deserialize and the app
+  reports a broken connection — while Zeus, which ignores unknown names,
+  kept working. That asymmetry is why 2.2.0 broke only BitBanana. Both
+  methods remain fully callable and stay discoverable through the
+  `extensions` tag (`09`, `13`), which is what extension-aware clients read.
+  Operators whose clients all understand them can restore the advertisement
+  with `services.albyhub.advertiseExtensionMethods = true` (or
+  `NWC_ADVERTISE_EXTENSION_METHODS=1`). Added `tests/test_client_compat.py`
+  (6 tests) pinning the advertisement to names every deployed client knows,
+  and asserted the module default in `tests/nwc.nix`.
+
 ### Added
 
 - Sovran NWC (`sovran-nwc` 2.2.0): `get_budget` (NWC-13) and `lookup_payment`

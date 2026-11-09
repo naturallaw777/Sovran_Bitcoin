@@ -73,6 +73,8 @@ assert lib.assertMsg (!(builtins.elem "${cfg.services.albyhub.dataDir}/unlock-pa
   "nwc-lnurl must not be able to read the daemon unlock password, only its scoped credential";
 assert lib.assertMsg (nwcUnit.environment.NWC_INVOICE_PASSWORD_FILE == "${cfg.services.albyhub.dataDir}/lnurl-api-password")
   "the NWC daemon must bind the 'invoice' scope to the LNURL service's scoped credential";
+assert lib.assertMsg (nwcUnit.environment.NWC_ADVERTISE_EXTENSION_METHODS == "0")
+  "extension methods must stay out of the wire advertisement by default (BitBanana <= 1.1.x / rust-nostr 0.43 fail on unknown method names)";
 pkgs.runCommand "sovran-bitcoin-nwc" {} ''
   echo ok > $out
 ''

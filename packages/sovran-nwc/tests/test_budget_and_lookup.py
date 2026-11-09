@@ -132,10 +132,30 @@ class BudgetAndLookupTest(unittest.TestCase):
     def test_get_info_advertises_new_methods_and_extensions(self) -> None:
         app = self._app()
         info = self._call(app, "get_info")["result"]
-        self.assertIn("get_budget", info["methods"])
-        self.assertIn("lookup_payment", info["methods"])
+        # `get_budget` and `lookup_payment` are deliberately withheld from
+        # `methods` by default:
+        # rust-nostr 0.43 (the NWC client in BitBanana <= 1.1.x) deserializes
+        # `methods` into a closed enum, so one unknown name breaks get_info
+        # for that whole class of clients. NWC-09 discovery happens through
+        # the extensions tag; the method itself stays callable.
+        self.assertNotIn("lookup_payment", info["methods"])
+        self.assertNotIn("get_budget", info["methods"])
+        self.assertIn("lookup_payment", daemon_mod.ALL_KNOWN_NIP47_METHODS)
+        self.assertEqual(
+            self._call(app, "lookup_payment", {"payment_hash": "ab" * 32})["result_type"],
+            "lookup_payment",
+        )
         self.assertIn("13", info["extensions"])
         self.assertIn("09", info["extensions"])
+
+    def test_get_info_can_advertise_lookup_payment_again(self) -> None:
+        orig = daemon_mod.ADVERTISE_EXTENSION_METHODS
+        daemon_mod.ADVERTISE_EXTENSION_METHODS = True
+        self.addCleanup(setattr, daemon_mod, "ADVERTISE_EXTENSION_METHODS", orig)
+        app = self._app()
+        info = self._call(app, "get_info")["result"]
+        self.assertIn("lookup_payment", info["methods"])
+        self.assertIn("get_budget", info["methods"])
 
     # ── lookup_payment ─────────────────────────────────────────────
 

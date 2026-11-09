@@ -109,6 +109,33 @@ NIP47_RATE_LIMIT_PER_MIN = int(os.environ.get("NWC_NIP47_RATE_LIMIT", "60"))
 MAX_INVOICE_EXPIRY_SEC = int(os.environ.get("NWC_MAX_INVOICE_EXPIRY", "604800"))
 # Bound on API/NIP-47 page sizes so one caller cannot force an unbounded scan.
 MAX_PAGE_SIZE = 500
+# Keep extension methods out of the `get_info.methods` array (and out of the
+# method list in the 13194 info event). NWC-09/NWC-13 ask for these to be
+# advertised, but the rust-nostr client library used by BitBanana <= 1.1.x
+# (nostr-sdk 0.43) deserializes methods into a *closed* enum: one unknown name
+# makes the whole get_info response fail to parse, so the app reports a broken
+# connection even though the daemon works. Such clients discover these
+# extensions through the `extensions` tag instead. Set
+# NWC_ADVERTISE_EXTENSION_METHODS=1 to advertise them again once those clients
+# are gone; the methods themselves keep working either way.
+ADVERTISE_EXTENSION_METHODS = os.environ.get(
+    "NWC_ADVERTISE_EXTENSION_METHODS", "0"
+).strip().lower() in ("1", "true", "yes", "on")
+
+# Extension methods withheld from the advertisement unless the opt-in is set.
+# Only names that post-date the widely deployed closed-enum clients belong
+# here; core NIP-47 methods are always advertised.
+EXTENSION_ONLY_METHODS = frozenset({"lookup_payment", "get_budget"})
+
+
+def advertised_methods(methods: list[str] | set[str]) -> list[str]:
+    """Methods safe to put on the wire for every deployed NWC client."""
+    names = set(methods)
+    if not ADVERTISE_EXTENSION_METHODS:
+        names -= EXTENSION_ONLY_METHODS
+    return sorted(names)
+
+
 # Cap on simultaneously-pending incoming invoices per wallet. Every pending
 # ledger row is also an OPEN invoice in LND's invoice table (a node-global,
 # ~1000-entry resource shared with RTL/BTCPay), so an uncapped wallet (or the
@@ -1762,7 +1789,7 @@ class SovranNwcDaemon:
         return _nostr_mod.make_event(
             app["wallet_privkey"],
             kind=13194,
-            content=" ".join(methods),
+            content=" ".join(advertised_methods(methods)),
             tags=tags,
         )
 
@@ -1808,7 +1835,7 @@ class SovranNwcDaemon:
                         "network": info["network"],
                         "block_height": info["block_height"],
                         "block_hash": info["block_hash"],
-                        "methods": list(allowed_methods),
+                        "methods": advertised_methods(allowed_methods),
                         "extensions": scopes_to_nwc_extensions(list(scopes)),
                         "notifications": (
                             ["payment_received", "payment_sent"]
@@ -2527,7 +2554,7 @@ class SovranNwcDaemon:
                     "running": True,
                     "unlocked": True,
                     "backendType": "LND",
-                    "version": "sovran-nwc-2.2.0",
+                    "version": "sovran-nwc-2.2.1",
                 }
 
             if route == "/api/setup" and method == "POST":
