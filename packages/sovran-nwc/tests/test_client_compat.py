@@ -147,5 +147,52 @@ class ClientCompatibilityTest(unittest.TestCase):
         self.assertIn("get_budget", info_ev["content"].split())
 
 
+
+
+class WireTypeCompatibilityTest(unittest.TestCase):
+    """Field *types* rust-nostr 0.43 insists on, not just names.
+
+    `get_info.pubkey` is typed `secp256k1::PublicKey` in 0.43: its JSON
+    deserializer accepts only a 33-byte compressed (66 hex) or uncompressed
+    (130 hex) key. A 64-char x-only key -- what `walletPubkey` is -- fails the
+    whole response, which BitBanana surfaces as "Can't deserialize response".
+    """
+
+    def setUp(self) -> None:
+        self._tmpdir = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmpdir.cleanup)
+        self._orig_audit_path = audit_mod.AUDIT_LOG_PATH
+        audit_mod.AUDIT_LOG_PATH = os.path.join(self._tmpdir.name, "audit.log")
+        self.addCleanup(setattr, audit_mod, "AUDIT_LOG_PATH", self._orig_audit_path)
+        self.store = daemon_mod.NwcStore(":memory:")
+        self.addCleanup(self.store.close)
+        self.daemon = daemon_mod.SovranNwcDaemon(
+            store=self.store, lnd=FakeLndClient(), unlock_password="pw", relays=[]
+        )
+        created = self.store.create_app(
+            name="pocket", scopes=["get_info"], isolated=True, max_amount_sat=0,
+            budget_renewal="never", metadata={}, relays=["wss://relay.example"],
+        )
+        self.app = self.store.get_app_internal_by_pubkeys(
+            created["appPubkey"], created["walletPubkey"]
+        )
+
+    def test_get_info_pubkey_is_secp256k1_compressed(self) -> None:
+        pub = self.daemon.handle_nip47_method(self.app, "get_info", {})["result"]["pubkey"]
+        self.assertEqual(len(pub), 66, "rust-nostr 0.43 needs a 33-byte compressed key")
+        self.assertIn(pub[:2], ("02", "03"))
+        bytes.fromhex(pub)  # must be valid hex
+        # and it must still identify the same wallet, not the LND node
+        self.assertEqual(pub[2:], self.app["walletPubkey"].lower())
+        self.assertNotEqual(pub[2:], self.daemon.lnd.get_info()["pubkey"][2:])
+
+    def test_compressed_pubkey_helper(self) -> None:
+        x = "ab" * 32
+        self.assertEqual(daemon_mod.compressed_pubkey(x), "02" + x)
+        self.assertEqual(daemon_mod.compressed_pubkey("02" + x), "02" + x)  # idempotent
+        self.assertEqual(daemon_mod.compressed_pubkey("zz" * 32), "zz" * 32)  # passthrough
+        self.assertEqual(daemon_mod.compressed_pubkey(""), "")
+
+
 if __name__ == "__main__":
     unittest.main()

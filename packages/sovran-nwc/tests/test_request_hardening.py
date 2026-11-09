@@ -243,7 +243,12 @@ class RequestHardeningTest(unittest.TestCase):
         payload = self._call("get_info", {})
         node_pubkey = self.lnd.get_info()["pubkey"]
         self.assertNotEqual(payload["result"]["pubkey"], node_pubkey)
-        self.assertEqual(payload["result"]["pubkey"], self.app["walletPubkey"])
+        # 33-byte compressed form of the wallet key: rust-nostr 0.43 types
+        # get_info.pubkey as secp256k1::PublicKey, which rejects x-only keys.
+        self.assertEqual(
+            payload["result"]["pubkey"],
+            "02" + self.app["walletPubkey"].lower(),
+        )
 
     def test_info_event_advertises_extensions(self) -> None:
         info = self.daemon.build_nip47_info_event(self.app)

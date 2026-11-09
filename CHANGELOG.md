@@ -8,6 +8,23 @@ This project follows [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- Sovran NWC (`sovran-nwc` 2.2.2): `get_info.pubkey` is sent in 33-byte
+  compressed form. Since 2.0.1 the field carried the wallet's 64-character
+  x-only key, but rust-nostr 0.43 — the NWC stack in BitBanana <= 1.1.x —
+  types it as `secp256k1::PublicKey`, whose JSON deserializer accepts only a
+  33-byte compressed (66 hex) or 65-byte uncompressed key. An x-only key makes
+  the *entire* response fail (`Can't deserialize response: response={...}`),
+  which the app reports as a connection failure while every other method —
+  including the daemon's own replies — is fine. This is why 2.2.1 (method
+  advertisement only) did not restore BitBanana. The key still identifies the
+  wallet, not the LND node, so the node-identity leak the x-only form was
+  introduced to prevent stays closed. Clients that read x-only (Zeus) are
+  unaffected: they take the 33-byte form or fall back to the pairing pubkey.
+  Added `WireTypeCompatibilityTest` in `tests/test_client_compat.py` pinning
+  the field to a compressed key.
+
+### Fixed
+
 - Sovran NWC (`sovran-nwc` 2.2.1): `get_info.methods` and the method list in
   the kind-13194 info event no longer advertise extension methods
   (`lookup_payment` from NWC-09, `get_budget` from NWC-13) by default.

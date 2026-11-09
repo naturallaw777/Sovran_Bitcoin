@@ -17,7 +17,7 @@
 
 stdenvNoCC.mkDerivation {
   pname = "sovran-nwc";
-  version = "2.2.1";
+  version = "2.2.2";
 
   src = ./.;
 

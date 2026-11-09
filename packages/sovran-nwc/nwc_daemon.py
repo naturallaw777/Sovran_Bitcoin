@@ -136,6 +136,28 @@ def advertised_methods(methods: list[str] | set[str]) -> list[str]:
     return sorted(names)
 
 
+def compressed_pubkey(hex_key: str) -> str:
+    """Return the 33-byte SEC compressed form of a 32-byte x-only key.
+
+    NIP-47 leaves the curve encoding of `get_info.pubkey` to the wallet, but
+    rust-nostr 0.43 (the NWC stack in BitBanana <= 1.1.x) types the field as
+    `secp256k1::PublicKey`, which only accepts a 33-byte compressed key. A
+    64-char x-only key makes the whole response fail to deserialize
+    (`CantDeserializeResponse`), which the app reports as a failed connection.
+    `get_info.pubkey` is the wallet's *own* key (a Nostr pubkey), so `02` is
+    the canonical, unambiguous prefix. Keys that are already 33 bytes (or
+    anything else) are returned unchanged.
+    """
+    key = str(hex_key or "").strip().lower()
+    if len(key) == 64:
+        try:
+            bytes.fromhex(key)
+        except ValueError:
+            return hex_key
+        return "02" + key
+    return hex_key
+
+
 # Cap on simultaneously-pending incoming invoices per wallet. Every pending
 # ledger row is also an OPEN invoice in LND's invoice table (a node-global,
 # ~1000-entry resource shared with RTL/BTCPay), so an uncapped wallet (or the
@@ -1831,7 +1853,9 @@ class SovranNwcDaemon:
                         # connection, not the LND node identity key: handing the
                         # node pubkey to every connected app leaks node identity
                         # and links the node to the app's payment history.
-                        "pubkey": app.get("walletPubkey") or info["pubkey"],
+                        "pubkey": compressed_pubkey(
+                            app.get("walletPubkey") or info["pubkey"]
+                        ),
                         "network": info["network"],
                         "block_height": info["block_height"],
                         "block_hash": info["block_hash"],
@@ -2554,7 +2578,7 @@ class SovranNwcDaemon:
                     "running": True,
                     "unlocked": True,
                     "backendType": "LND",
-                    "version": "sovran-nwc-2.2.1",
+                    "version": "sovran-nwc-2.2.2",
                 }
 
             if route == "/api/setup" and method == "POST":
