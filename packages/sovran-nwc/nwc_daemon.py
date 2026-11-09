@@ -24,6 +24,7 @@ import sqlite3
 import threading
 import time
 import urllib.parse
+from collections import deque
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 
@@ -63,6 +64,87 @@ def scopes_to_nip47_methods(scopes: list[str]) -> list[str]:
             if m not in methods:
                 methods.append(m)
     return methods
+
+
+# Optional NWC extension specs (https://github.com/nostr-wallet-connect/nwc)
+# that this daemon actually implements, keyed by the scope that enables them.
+# Advertised in the `extensions` tag of the 13194 info event (NIP-47) and in
+# the `extensions` array of the `get_info` result, so clients can discover
+# keysend/notifications/history support without guessing.
+SCOPE_TO_NWC_EXTENSIONS = {
+    "notifications": "02",      # NWC-02 notifications
+    "pay_invoice": "04",        # NWC-04 keysend payments
+    "list_transactions": "05",  # NWC-05 transaction history
+}
+
+
+def scopes_to_nwc_extensions(scopes: list[str]) -> list[str]:
+    out: list[str] = []
+    for scope in scopes:
+        ext = SCOPE_TO_NWC_EXTENSIONS.get(scope)
+        if ext and ext not in out:
+            out.append(ext)
+    return sorted(out)
+
+
+# ── Request validation limits ─────────────────────────────────────
+#
+# A NIP-47 request is unauthenticated beyond its Schnorr signature: anybody
+# who holds a pairing URI secret can sign one, and a relay operator can replay
+# any signed request it has ever seen. These limits bound how far the daemon
+# trusts that event.
+REQUEST_MAX_AGE_SEC = int(os.environ.get("NWC_REQUEST_MAX_AGE", "600"))
+REQUEST_MAX_FUTURE_SKEW_SEC = int(os.environ.get("NWC_REQUEST_MAX_FUTURE_SKEW", "300"))
+# Per-connection request budget (NIP-47 `RATE_LIMITED`).
+NIP47_RATE_LIMIT_PER_MIN = int(os.environ.get("NWC_NIP47_RATE_LIMIT", "60"))
+# Upper bound on a client-requested invoice expiry (seconds).
+MAX_INVOICE_EXPIRY_SEC = int(os.environ.get("NWC_MAX_INVOICE_EXPIRY", "604800"))
+# Bound on API/NIP-47 page sizes so one caller cannot force an unbounded scan.
+MAX_PAGE_SIZE = 500
+
+
+def _as_int(value: Any, default: int | None = None) -> int | None:
+    """Coerce a client-supplied value to int, or return *default* when invalid.
+
+    JSON-RPC params are attacker-controlled: a string like "abc" or a float
+    must produce a NIP-47 error, never an unhandled ValueError.
+    """
+    if isinstance(value, bool):
+        return default
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        return int(value)
+    if isinstance(value, str):
+        try:
+            return int(value.strip(), 10)
+        except (TypeError, ValueError):
+            return default
+    return default
+
+
+def _strict_int(qs: dict[str, list[str]], key: str, default: int, lo: int, hi: int) -> int:
+    """Parse a query-string integer strictly (400 instead of silent default).
+
+    Operator-facing endpoints should reject `?limit=abc` so a broken script is
+    visible, rather than quietly serving a default page.
+    """
+    raw = (qs.get(key) or [None])[0]
+    if raw is None or raw == "":
+        return max(lo, min(default, hi))
+    parsed = _as_int(raw, None)
+    if parsed is None:
+        raise ValueError(f"{key} must be an integer")
+    if not (lo <= parsed <= hi):
+        raise ValueError(f"{key} must be between {lo} and {hi}")
+    return parsed
+
+
+def _bounded(value: Any, default: int, lo: int, hi: int) -> int:
+    parsed = _as_int(value, default)
+    if parsed is None:
+        parsed = default
+    return max(lo, min(int(parsed), hi))
 
 
 # ── SQLite Sub-Wallet Ledger Store ────────────────────────────────
@@ -206,6 +288,12 @@ class NwcStore:
                 "SELECT * FROM sovran_apps WHERE id = ?", (int(app_id),)
             ).fetchone()
             return self._row_to_app_dict(row) if row else None
+
+    def known_wallet_pubkeys(self) -> set[str]:
+        """Return every wallet pubkey this daemon serves (for a cheap pre-filter)."""
+        with self._lock:
+            rows = self._conn.execute("SELECT wallet_pubkey FROM sovran_apps").fetchall()
+        return {str(r["wallet_pubkey"]).lower() for r in rows}
 
     def get_app_internal_by_pubkeys(
         self, client_pubkey: str, wallet_pubkey: str | None = None
@@ -578,8 +666,8 @@ class NwcStore:
             clauses.append("type = ?")
             params.append(tx_type)
         if not unpaid:
-            # By default NIP-47 list_transactions returns settled transactions unless unpaid=True
-            pass
+            # NIP-47 / NWC-05: settled transactions only unless `unpaid` is set.
+            clauses.append("state = 'settled'")
         if from_ts is not None:
             clauses.append("created_at >= ?")
             params.append(int(from_ts))
@@ -920,6 +1008,11 @@ class SovranNwcDaemon:
         self._stop_event = threading.Event()
         self._relay_conns_lock = threading.Lock()
         self._relay_conns: list[_nostr_mod.WebSocketConnection] = []
+        self._rate_limit_lock = threading.Lock()
+        self._rate_limit: dict[int, deque[float]] = {}
+        self._pubkey_cache_lock = threading.Lock()
+        self._pubkey_cache: set[str] | None = None
+        self._pubkey_cache_at = 0.0
 
     # ── Token authentication & authorization ───────────────────────
 
@@ -983,36 +1076,107 @@ class SovranNwcDaemon:
         """Verify, decrypt, execute, and build response event(s) for a kind 23194 request."""
         if int(event.get("kind", 0)) != 23194:
             return []
+
+        event_id = str(event["id"]).lower()
+        client_pubkey = str(event["pubkey"]).lower()
+
+        # Cheap pre-filter BEFORE the expensive part: a wallet pubkey is public
+        # (it is in every 13194 info event), so anybody can publish kind-23194
+        # events tagged with it. Pure-Python Schnorr verification costs ~5 ms,
+        # so a flood of junk events would block this relay's read loop and
+        # starve real requests. Drop anything not addressed to a wallet we
+        # serve without touching the signature.
+        p_tags = [
+            str(t[1]).lower()
+            for t in (event.get("tags") or [])
+            if isinstance(t, list) and len(t) >= 2 and str(t[0]) == "p"
+        ]
+        known_pubkeys = self._known_wallet_pubkeys()
+        matched = [pk for pk in p_tags if pk in known_pubkeys]
+        if not matched:
+            logger.debug("Dropping NIP-47 event %s for unknown wallet", event_id)
+            return []
+        wallet_pubkey = matched[0]
+
         if not _nostr_mod.verify_event(event):
             logger.warning("Rejected NIP-47 event with invalid signature")
             return []
 
-        event_id = str(event["id"]).lower()
-        client_pubkey = str(event["pubkey"]).lower()
-        p_tags = [
-            t[1].lower()
-            for t in (event.get("tags") or [])
-            if isinstance(t, list) and len(t) >= 2 and t[0] == "p"
-        ]
-        wallet_pubkey = p_tags[0] if p_tags else None
         app = self.store.get_app_internal_by_pubkeys(client_pubkey, wallet_pubkey)
         if app is None:
             return []
+
+        # ── Replay / staleness guards ─────────────────────────────
+        # NIP-47: a request carrying an `expiration` tag that has passed "should
+        # be ignored". Independently, refuse events whose created_at is outside
+        # a small window so a relay (or anyone who captured a signed request)
+        # cannot execute a months-old event with a fresh-looking signature.
+        now = int(time.time())
+        raw_created_at = _as_int(event.get("created_at"), 0) or 0
+        if (
+            raw_created_at <= 0
+            or now - raw_created_at > REQUEST_MAX_AGE_SEC
+            or raw_created_at - now > REQUEST_MAX_FUTURE_SKEW_SEC
+        ):
+            logger.warning(
+                "Ignoring stale/out-of-window NIP-47 request %s (created_at=%s)",
+                event_id,
+                raw_created_at,
+            )
+            return []
+        for tag in event.get("tags") or []:
+            if isinstance(tag, list) and len(tag) >= 2 and str(tag[0]).lower() == "expiration":
+                expires_at = _as_int(tag[1], 0) or 0
+                if expires_at and now >= expires_at:
+                    logger.info("Ignoring expired NIP-47 request %s", event_id)
+                    return []
+
+        # ── Encryption negotiation (NIP-47 "Encryption") ──────────
+        scheme = self._request_encryption(event)
+        if scheme is None:
+            logger.warning("Rejecting NIP-47 request %s: unsupported encryption", event_id)
+            return [
+                self._build_nip47_response_event(
+                    app["wallet_privkey"],
+                    client_pubkey,
+                    event_id,
+                    {
+                        "result_type": "error",
+                        "error": {
+                            "code": "UNSUPPORTED_ENCRYPTION",
+                            "message": "This wallet supports nip44_v2 and nip04 only",
+                        },
+                    },
+                    True,
+                )
+            ]
+        use_nip44 = scheme == "nip44_v2"
+
+        # ── Per-connection request budget ─────────────────────────
+        if self._rate_limited(int(app["id"])):
+            logger.warning("Rate-limiting NIP-47 requests for wallet %s", app["id"])
+            return [
+                self._build_nip47_response_event(
+                    app["wallet_privkey"],
+                    client_pubkey,
+                    event_id,
+                    {
+                        "result_type": "error",
+                        "error": {
+                            "code": "RATE_LIMITED",
+                            "message": "Too many requests; retry in a few seconds",
+                        },
+                    },
+                    use_nip44,
+                )
+            ]
 
         if not self.store.mark_event_processed(event_id):
             return []
 
         wallet_priv_bytes = bytes.fromhex(app["wallet_privkey"])
         client_pub_bytes = bytes.fromhex(client_pubkey)
-
-        # Detect NIP-44 v2 vs NIP-04
-        enc_tags = [
-            t[1]
-            for t in (event.get("tags") or [])
-            if isinstance(t, list) and len(t) >= 2 and t[0] == "encryption"
-        ]
         content = str(event.get("content") or "")
-        use_nip44 = ("nip44_v2" in enc_tags) or ("?iv=" not in content)
 
         try:
             if use_nip44:
@@ -1044,7 +1208,24 @@ class SovranNwcDaemon:
 
         method = str(req_obj.get("method") or "")
         params = req_obj.get("params") or {}
-        resp_payload = self.handle_nip47_method(app, method, params)
+        if not isinstance(params, dict):
+            params = {}
+        # Never let an unexpected exception (a malformed numeric param, an LND
+        # response we did not model, …) escape into the relay worker: that
+        # drops the WebSocket connection, sends no response, and leaves the
+        # request marked as processed so no retry can ever succeed.
+        try:
+            resp_payload = self.handle_nip47_method(app, method, params)
+        except Exception:  # noqa: BLE001 - defensive boundary
+            logger.exception(
+                "Unhandled error while executing NIP-47 method %r for wallet %s",
+                method,
+                app["id"],
+            )
+            resp_payload = {
+                "result_type": method or "unknown",
+                "error": {"code": "INTERNAL", "message": "Request could not be processed"},
+            }
         return [
             self._build_nip47_response_event(
                 app["wallet_privkey"],
@@ -1054,6 +1235,60 @@ class SovranNwcDaemon:
                 use_nip44,
             )
         ]
+
+    def _known_wallet_pubkeys(self) -> set[str]:
+        """Cached set of wallet pubkeys (short TTL; invalidated on app changes)."""
+        now = time.monotonic()
+        with self._pubkey_cache_lock:
+            if self._pubkey_cache is not None and now - self._pubkey_cache_at < 5.0:
+                return self._pubkey_cache
+        keys = self.store.known_wallet_pubkeys()
+        with self._pubkey_cache_lock:
+            self._pubkey_cache = keys
+            self._pubkey_cache_at = time.monotonic()
+        return keys
+
+    @staticmethod
+    def _request_encryption(event: dict[str, Any]) -> str | None:
+        """Return ``"nip44_v2"``/``"nip04"`` for a request, or None if unsupported.
+
+        NIP-47 negotiates encryption with an `encryption` tag on every request;
+        the tag is authoritative. Only tag-less requests fall back to the
+        legacy heuristic (a NIP-04 payload always carries `?iv=`).
+        """
+        content = str(event.get("content") or "")
+        for tag in event.get("tags") or []:
+            if (
+                isinstance(tag, list)
+                and len(tag) >= 2
+                and str(tag[0]).lower() == "encryption"
+            ):
+                value = str(tag[1]).strip().lower()
+                if value in ("nip44_v2", "nip44"):
+                    return "nip44_v2"
+                if value == "nip04":
+                    return "nip04"
+                return None
+        return "nip44_v2" if "?iv=" not in content else "nip04"
+
+    def _rate_limited(self, app_id: int) -> bool:
+        """Return True when *app_id* has exceeded its per-minute request budget."""
+        if NIP47_RATE_LIMIT_PER_MIN <= 0:
+            return False
+        now = time.monotonic()
+        cutoff = now - 60.0
+        with self._rate_limit_lock:
+            bucket = self._rate_limit.setdefault(int(app_id), deque())
+            while bucket and bucket[0] < cutoff:
+                bucket.popleft()
+            if len(bucket) >= NIP47_RATE_LIMIT_PER_MIN:
+                return True
+            bucket.append(now)
+            # Opportunistic cleanup so the map cannot grow without bound.
+            if len(self._rate_limit) > 256:
+                for key in [k for k, v in self._rate_limit.items() if not v or v[-1] < cutoff]:
+                    self._rate_limit.pop(key, None)
+            return False
 
     def _build_nip47_response_event(
         self,
@@ -1080,10 +1315,13 @@ class SovranNwcDaemon:
     def build_nip47_info_event(self, app: dict[str, Any]) -> dict[str, Any]:
         scopes = app.get("scopes") or []
         methods = scopes_to_nip47_methods(scopes)
+        extensions = scopes_to_nwc_extensions(scopes)
         tags = [
             ["encryption", "nip44_v2 nip04"],
             ["p", app["appPubkey"]],
         ]
+        if extensions:
+            tags.append(["extensions", " ".join(extensions)])
         if "notifications" in scopes:
             tags.append(["notifications", "payment_received payment_sent"])
         return _nostr_mod.make_event(
@@ -1127,11 +1365,16 @@ class SovranNwcDaemon:
                     "result": {
                         "alias": app.get("name") or info["alias"],
                         "color": info["color"],
-                        "pubkey": info["pubkey"],
+                        # Per NIP-47 this is the *wallet service* pubkey for this
+                        # connection, not the LND node identity key: handing the
+                        # node pubkey to every connected app leaks node identity
+                        # and links the node to the app's payment history.
+                        "pubkey": app.get("walletPubkey") or info["pubkey"],
                         "network": info["network"],
                         "block_height": info["block_height"],
                         "block_hash": info["block_hash"],
                         "methods": list(allowed_methods),
+                        "extensions": scopes_to_nwc_extensions(list(scopes)),
                         "notifications": (
                             ["payment_received", "payment_sent"]
                             if "notifications" in scopes
@@ -1150,7 +1393,7 @@ class SovranNwcDaemon:
                 }
 
             if method == "make_invoice":
-                amount_msat = int(params.get("amount") or 0)
+                amount_msat = _as_int(params.get("amount"), 0) or 0
                 if amount_msat <= 0:
                     return {
                         "result_type": "make_invoice",
@@ -1158,7 +1401,9 @@ class SovranNwcDaemon:
                     }
                 desc = str(params.get("description") or "")
                 desc_hash = str(params.get("description_hash") or "")
-                expiry = int(params.get("expiry") or 3600)
+                # Client-chosen expiry is bounded: an unbounded (`expiry`=2**31)
+                # invoice would sit OPEN in LND's invoice table indefinitely.
+                expiry = _bounded(params.get("expiry"), 3600, 1, MAX_INVOICE_EXPIRY_SEC)
                 inv = self.lnd.create_invoice(
                     amount_msat=amount_msat,
                     memo=desc,
@@ -1188,6 +1433,14 @@ class SovranNwcDaemon:
                     preimage = ""
                 if preimage:
                     self.store.set_preimage_for_hash(inv["payment_hash"], preimage)
+                _audit_mod.audit_log(
+                    "nwc_invoice_created",
+                    app_id=app_id,
+                    alias=app.get("name"),
+                    amount_msat=amount_msat,
+                    payment_hash=inv["payment_hash"],
+                    expiry=expiry,
+                )
                 return {
                     "result_type": "make_invoice",
                     "result": self.store.to_nip47_tx(tx),
@@ -1215,8 +1468,8 @@ class SovranNwcDaemon:
                 self.reconcile_pending_invoices(app_id=app_id)
                 txs, _ = self.store.list_transactions(
                     app_id=app_id,
-                    limit=int(params.get("limit") or 50),
-                    offset=int(params.get("offset") or 0),
+                    limit=_bounded(params.get("limit"), 50, 1, MAX_PAGE_SIZE),
+                    offset=_bounded(params.get("offset"), 0, 0, 2**31 - 1),
                     tx_type=params.get("type"),
                     unpaid=bool(params.get("unpaid", False)),
                     from_ts=params.get("from"),
@@ -1265,7 +1518,7 @@ class SovranNwcDaemon:
                 "error": {"code": "OTHER", "message": "Missing invoice"},
             }
         decoded = self.lnd.decode_payreq(bolt11)
-        override_amt = int(params.get("amount") or 0) or None
+        override_amt = _as_int(params.get("amount"), 0) or None
         amount_msat = int(decoded["amount_msat"] or override_amt or 0)
         if amount_msat <= 0:
             return {
@@ -1298,6 +1551,14 @@ class SovranNwcDaemon:
             )
         except _lnd_mod.LndError as exc:
             self.store.finalize_outgoing_payment(tx_id, succeeded=False)
+            _audit_mod.audit_log(
+                "nwc_payment_failed",
+                app_id=app_id,
+                alias=app.get("name"),
+                amount_msat=amount_msat,
+                payment_hash=decoded["payment_hash"],
+                reason=str(exc),
+            )
             return {
                 "result_type": "pay_invoice",
                 "error": {"code": "PAYMENT_FAILED", "message": str(exc)},
@@ -1310,6 +1571,14 @@ class SovranNwcDaemon:
             fees_paid_msat=pay_res["fees_paid_msat"],
         )
         self._emit_notification(app_id, "payment_sent", settled_tx)
+        _audit_mod.audit_log(
+            "nwc_payment_sent",
+            app_id=app_id,
+            alias=app.get("name"),
+            amount_msat=amount_msat,
+            fees_paid_msat=pay_res["fees_paid_msat"],
+            payment_hash=decoded["payment_hash"],
+        )
         return {
             "result_type": "pay_invoice",
             "result": {
@@ -1324,7 +1593,7 @@ class SovranNwcDaemon:
         """Execute a single `pay_keysend` request (NWC-04) and build its payload."""
         app_id = int(app["id"])
         pubkey = str(params.get("pubkey") or "").strip().lower()
-        amount_msat = int(params.get("amount") or 0)
+        amount_msat = _as_int(params.get("amount"), 0) or 0
         preimage_hex = str(params.get("preimage") or "").strip().lower()
         tlv_records = params.get("tlv_records")
         tlv_records = list(tlv_records) if isinstance(tlv_records, list) else []
@@ -1415,6 +1684,15 @@ class SovranNwcDaemon:
             fees_paid_msat=pay_res["fees_paid_msat"],
         )
         self._emit_notification(app_id, "payment_sent", settled_tx)
+        _audit_mod.audit_log(
+            "nwc_keysend_sent",
+            app_id=app_id,
+            alias=app.get("name"),
+            amount_msat=amount_msat,
+            fees_paid_msat=pay_res["fees_paid_msat"],
+            dest=pubkey,
+            payment_hash=payment_hash,
+        )
         return {
             "result_type": "pay_keysend",
             "result": {
@@ -1577,6 +1855,8 @@ class SovranNwcDaemon:
             )
 
     def refresh_all_relays(self) -> None:
+        with self._pubkey_cache_lock:
+            self._pubkey_cache = None
         with self._relay_conns_lock:
             conns = list(self._relay_conns)
         for conn in conns:
@@ -1662,8 +1942,8 @@ class SovranNwcDaemon:
             # List apps (allowed for full, read, invoice)
             if route == "/api/apps" and method == "GET":
                 perm = self.verify_token(auth, {"full", "read", "invoice"})
-                limit = int((qs.get("limit") or ["100"])[0])
-                offset = int((qs.get("offset") or ["0"])[0])
+                limit = _strict_int(qs, "limit", 100, 1, MAX_PAGE_SIZE)
+                offset = _strict_int(qs, "offset", 0, 0, 2**31 - 1)
                 if perm != "invoice":
                     self.reconcile_pending_invoices()
                 apps, total = self.store.list_apps(limit=limit, offset=offset)
@@ -1694,6 +1974,12 @@ class SovranNwcDaemon:
                     relays=self.relays,
                 )
                 created.pop("wallet_privkey", None)
+                _audit_mod.audit_log(
+                    "nwc_wallet_created",
+                    wallet_id=created.get("id"),
+                    name=created.get("name"),
+                    scopes=created.get("scopes"),
+                )
                 self.refresh_all_relays()
                 return 200, created
 
@@ -1714,6 +2000,7 @@ class SovranNwcDaemon:
                 deleted = self.store.delete_app_by_pubkey(pubkey)
                 if not deleted:
                     return 404, {"error": "App not found"}
+                _audit_mod.audit_log("nwc_wallet_deleted", app_pubkey=pubkey)
                 self.refresh_all_relays()
                 return 200, {"ok": True}
 
@@ -1800,10 +2087,13 @@ class SovranNwcDaemon:
                 )
                 if app_id is not None:
                     self.reconcile_pending_invoices(app_id=app_id)
-                limit = int((qs.get("limit") or ["100"])[0])
-                offset = int((qs.get("offset") or ["0"])[0])
+                limit = _strict_int(qs, "limit", 100, 1, MAX_PAGE_SIZE)
+                offset = _strict_int(qs, "offset", 0, 0, 2**31 - 1)
+                # The operator view must include pending rows: `nwc-wallet
+                # drain/delete` refuse to run while a payment is in flight and
+                # detect that by looking for state == "pending" here.
                 txs, total = self.store.list_transactions(
-                    app_id=app_id, limit=limit, offset=offset
+                    app_id=app_id, limit=limit, offset=offset, unpaid=True
                 )
                 return 200, {"transactions": txs, "totalCount": total}
 
@@ -1813,6 +2103,13 @@ class SovranNwcDaemon:
             return exc.http_status, {"error": str(exc), "code": exc.code}
         except _lnd_mod.LndError as exc:
             return 502, {"error": str(exc), "code": exc.code}
+        except (ValueError, TypeError):
+            # A malformed query string or JSON field must be a 400, not an
+            # unhandled exception inside the request handler.
+            return 400, {"error": "Invalid request parameter", "code": "invalid_parameter"}
+        except Exception:  # noqa: BLE001 - defensive boundary
+            logger.exception("Unhandled management API error for %s %s", method, route)
+            return 500, {"error": "Internal server error", "code": "internal"}
 
 
 def make_http_server(

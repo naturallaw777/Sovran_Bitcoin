@@ -22,7 +22,7 @@ import re
 import time
 import urllib.parse
 from collections import defaultdict
-from http.server import BaseHTTPRequestHandler, HTTPServer
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import TYPE_CHECKING
 
 from . import nwc_hub_manager as _mgr_mod
@@ -244,15 +244,22 @@ def _make_handler(manager: "AlbyHubManager") -> type:
             self.send_response(status)
             self.send_header("Content-Type", "application/json")
             self.send_header("Content-Length", str(len(raw)))
+            # A BOLT11 invoice is bearer-ish: never let a cache or proxy keep it.
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("X-Content-Type-Options", "nosniff")
             self.end_headers()
             self.wfile.write(raw)
 
         def _get_client_ip(self) -> str:
-            # Check X-Forwarded-For header (set by Caddy)
+            # Check X-Forwarded-For header (appended by the reverse proxy).
             forwarded = self.headers.get("X-Forwarded-For")
             if forwarded:
-                # Take the first IP in the chain (trusts the proxy to set this).
-                candidate = forwarded.split(",")[0].strip()
+                # Take the LAST entry in the chain: that is the address the
+                # proxy itself observed. The leftmost entries are whatever the
+                # client chose to send, and nginx/Caddy append rather than
+                # replace by default -- keying the rate limiter on the first
+                # entry lets any client rotate a spoofed value and bypass it.
+                candidate = forwarded.split(",")[-1].strip()
             else:
                 candidate = self.client_address[0]
             # Validate the IP so a malformed/forged value cannot be used as a
@@ -351,7 +358,11 @@ def run(
     if manager is None:
         manager = _mgr_mod.get_manager()
     handler_class = _make_handler(manager)
-    server = HTTPServer((host, port), handler_class)
+    # Threaded: one slow client must not stall discovery/callbacks for
+    # everybody else (the previous single-threaded server was a trivial
+    # remote-denial-of-service surface on the only internet-facing unit).
+    server = ThreadingHTTPServer((host, port), handler_class)
+    server.daemon_threads = True
     logger.info("nwc-lnurl service listening on %s:%d", host, port)
     server.serve_forever()
 

@@ -774,8 +774,11 @@ class WebSocketConnection:
         if not lines or " 101 " not in lines[0]:
             raise OSError(f"WebSocket upgrade rejected: {lines[0] if lines else 'empty'}")
 
+        # SHA-1 is mandated by RFC 6455 here; it is a handshake check, not a
+        # security primitive, hence usedforsecurity=False (also silences
+        # bandit B324 / Semgrep py/weak-hash false positives).
         expected_accept = base64.b64encode(
-            hashlib.sha1((ws_key + _WS_GUID).encode("ascii")).digest()
+            hashlib.sha1((ws_key + _WS_GUID).encode("ascii"), usedforsecurity=False).digest()
         ).decode("ascii")
         headers = {}
         for line in lines[1:]:

@@ -32,6 +32,10 @@ stdenvNoCC.mkDerivation {
     python3 tests/test_nwc_daemon.py
     python3 tests/test_wallet_lookup.py
     python3 tests/test_send_cap.py
+    python3 tests/test_followups.py
+    python3 tests/test_lnd_rest_pay.py
+    python3 tests/test_tls_posture.py
+    python3 tests/test_request_hardening.py
     runHook postCheck
   '';
 

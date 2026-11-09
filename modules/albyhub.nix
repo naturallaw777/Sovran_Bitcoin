@@ -117,6 +117,13 @@ let
   cfg = config.services.albyhub;
   nbLib = config.nix-bitcoin.lib;
 
+  # Hardcoded in nwc_audit.py (AUDIT_LOG_PATH). The daemon now records wallet
+  # creation, invoice creation, and every outgoing payment here, so the file
+  # must exist before the first write and be re-mounted writable inside the
+  # sandbox (ProtectSystem = "strict" makes the rest of the filesystem
+  # read-only). Mirrors the handling in services.sovran-lnurl.
+  auditLogPath = "/var/log/sovran-nwc-audit.log";
+
   lndRpcAddress = config.services.lnd.rpcAddress;
   lndRpcPort = config.services.lnd.rpcPort;
   lndRestAddress = config.services.lnd.restAddress;
@@ -220,6 +227,7 @@ in {
 
     systemd.tmpfiles.rules = [
       "d '${cfg.dataDir}' 0700 ${cfg.user} ${cfg.group} - -"
+      "f ${auditLogPath} 0600 ${cfg.user} ${cfg.group} -"
     ];
 
     environment.systemPackages = [ wrappedNwcWallet ];
@@ -276,7 +284,7 @@ in {
         PrivateTmp = true;
         ProtectHome = true;
         ProtectSystem = "strict";
-        ReadWritePaths = [ cfg.dataDir ];
+        ReadWritePaths = [ cfg.dataDir auditLogPath ];
         ReadOnlyPaths = [ lndCertPath "/run/lnd" ];
       };
     };
