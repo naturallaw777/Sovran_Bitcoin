@@ -6,6 +6,48 @@ This project follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- Sovran NWC (`sovran-nwc` 2.2.0): `get_budget` (NWC-13) and `lookup_payment`
+  (NWC-09). `get_budget` has its own connection scope, independent of
+  `get_balance`, and returns an empty result when no budget is configured;
+  budget usage now also respects the configured renewal period (calendar
+  windows in UTC, matching enforcement). `lookup_payment` reconciles a single
+  payment by `transaction_id`, `payment_hash`, or `invoice` and never reveals
+  other wallets' records. Note: `get_budget` answers `RESTRICTED` for
+  connections created before this release until the wallet is re-created
+  (secret rotation preserves scopes); `lookup_payment` works for existing
+  connections immediately.
+- Sovran NWC: NIP-42 relay authentication. The daemon now answers relay
+  `AUTH` challenges with a kind-22242 event (signed by the oldest wallet key)
+  and re-issues its subscription afterwards, so auth-required relays —
+  including most self-hosted ones — serve NWC requests. Relays that restrict
+  reads to the authenticated pubkey can only serve that one wallet per
+  connection.
+
+### Security
+
+- Sovran NWC (`sovran-nwc` 2.1.0): API token scopes are bound to credentials,
+  not to the client-requested permission. The internet-facing `nwc-lnurl`
+  unit now holds a dedicated invoice-scoped secret
+  (`/var/lib/albyhub/lnurl-api-password`, generated automatically on first
+  daemon start after upgrade) and can no longer read the daemon unlock
+  password; presenting its secret while asking for a `full` token returns
+  HTTP 403.
+- Sovran NWC (2.1.0): invoice lifecycle. Pending invoices are reconciled in
+  batches via LND `ListInvoices`, are canceled on LND and marked `expired`
+  once past their BOLT11 expiry, and are canceled after internal
+  wallet-to-wallet settlement so they cannot be paid a second time
+  externally. A per-wallet pending-invoice cap
+  (`NWC_MAX_PENDING_INVOICES`, default 200) protects LND's node-global
+  invoice table.
+- Sovran NWC (2.0.1 hardening): NIP-47 request freshness/expiry checks and
+  per-connection rate limiting, encryption negotiated from event tags,
+  unknown-wallet events filtered before signature verification, wallet
+  (not node) pubkey in `get_info`, management-API parameter validation,
+  audit logging of wallet/invoice/payment events, and a threaded LNURL
+  service with last-hop `X-Forwarded-For` rate limiting.
+
 ### Fixed
 
 - Raised electrs's file-descriptor ceiling by setting

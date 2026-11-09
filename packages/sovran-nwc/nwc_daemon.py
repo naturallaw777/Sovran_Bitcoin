@@ -44,12 +44,18 @@ SCOPE_TO_NIP47_METHODS = {
     "get_balance": ["get_balance"],
     "make_invoice": ["make_invoice"],
     "lookup_invoice": ["lookup_invoice"],
-    "list_transactions": ["list_transactions"],
+    # `lookup_payment` (NWC-09) reconciles a single payment record; it is
+    # granted both to history readers and to spenders reconciling their own
+    # payments after a timeout or missed notification.
+    "list_transactions": ["list_transactions", "lookup_payment"],
     # The spend scope covers every way to send: invoice payments and
     # keysend (NWC-04). The deprecated multi_pay_* commands are deliberately
     # not offered — they were removed from NIP-47 and only exist as an
     # Alby Hub legacy dialect.
-    "pay_invoice": ["pay_invoice", "pay_keysend"],
+    "pay_invoice": ["pay_invoice", "pay_keysend", "lookup_payment"],
+    # NWC-13: budget visibility is a permission of its own, independent of
+    # `get_balance` (a connection may see its allowance, not the balance).
+    "get_budget": ["get_budget"],
 }
 
 # Every method this daemon knows how to handle, in any scope. Anything else
@@ -70,23 +76,22 @@ def scopes_to_nip47_methods(scopes: list[str]) -> list[str]:
 
 
 # Optional NWC extension specs (https://github.com/nostr-wallet-connect/nwc)
-# that this daemon actually implements, keyed by the scope that enables them.
-# Advertised in the `extensions` tag of the 13194 info event (NIP-47) and in
-# the `extensions` array of the `get_info` result, so clients can discover
-# keysend/notifications/history support without guessing.
-SCOPE_TO_NWC_EXTENSIONS = {
-    "notifications": "02",      # NWC-02 notifications
-    "pay_invoice": "04",        # NWC-04 keysend payments
-    "list_transactions": "05",  # NWC-05 transaction history
-}
-
-
+# that this daemon actually implements. Advertised in the `extensions` tag
+# of the 13194 info event (NIP-47) and in the `extensions` array of the
+# `get_info` result, so clients can discover support without guessing.
 def scopes_to_nwc_extensions(scopes: list[str]) -> list[str]:
+    methods = set(scopes_to_nip47_methods(scopes))
     out: list[str] = []
-    for scope in scopes:
-        ext = SCOPE_TO_NWC_EXTENSIONS.get(scope)
-        if ext and ext not in out:
-            out.append(ext)
+    if "notifications" in scopes:
+        out.append("02")  # NWC-02 notifications
+    if "pay_keysend" in methods:
+        out.append("04")  # NWC-04 keysend payments
+    if "list_transactions" in methods:
+        out.append("05")  # NWC-05 transaction history
+    if "lookup_payment" in methods:
+        out.append("09")  # NWC-09 payment lookup
+    if "get_budget" in methods:
+        out.append("13")  # NWC-13 connection budgets
     return sorted(out)
 
 
@@ -154,6 +159,48 @@ def _bounded(value: Any, default: int, lo: int, hi: int) -> int:
     if parsed is None:
         parsed = default
     return max(lo, min(int(parsed), hi))
+
+
+BUDGET_PERIODS = ("daily", "weekly", "monthly", "yearly", "never")
+
+
+def _budget_period_window(
+    period: str, now_ts: int
+) -> tuple[int | None, int | None]:
+    """`(period_start, renews_at)` in UTC for a budget renewal period.
+
+    Budgets reset at UTC calendar boundaries: midnight (daily), Monday
+    00:00 (weekly), the 1st (monthly), Jan 1 (yearly). `never` — and any
+    unrecognised value, defensively — has no window: usage counts all-time
+    and there is no renewal timestamp.
+    """
+    import datetime as _dt
+
+    p = (period or "never").strip().lower()
+    if p not in BUDGET_PERIODS or p == "never":
+        return None, None
+    now = _dt.datetime.fromtimestamp(int(now_ts), tz=_dt.timezone.utc)
+    if p == "daily":
+        start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        nxt = start + _dt.timedelta(days=1)
+    elif p == "weekly":
+        start = (now - _dt.timedelta(days=now.weekday())).replace(
+            hour=0, minute=0, second=0, microsecond=0
+        )
+        nxt = start + _dt.timedelta(days=7)
+    elif p == "monthly":
+        start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+        nxt = (
+            start.replace(year=start.year + 1, month=1)
+            if start.month == 12
+            else start.replace(month=start.month + 1)
+        )
+    else:  # yearly
+        start = now.replace(
+            month=1, day=1, hour=0, minute=0, second=0, microsecond=0
+        )
+        nxt = start.replace(year=start.year + 1)
+    return int(start.timestamp()), int(nxt.timestamp())
 
 
 # ── SQLite Sub-Wallet Ledger Store ────────────────────────────────
@@ -903,6 +950,34 @@ class NwcStore:
                 cur.execute("ROLLBACK")
                 raise
 
+    def budget_used_msat(self, app_id: int, since: int | None = None) -> int:
+        """Outgoing msat counting against the budget (settled + in-flight).
+
+        This is exactly the figure budget enforcement uses, so `get_budget`
+        can never disagree with the gate that refuses payments.
+        """
+        with self._lock:
+            if since is not None:
+                row = self._conn.execute(
+                    """
+                    SELECT COALESCE(SUM(amount_msat + fees_paid_msat + fee_reserve_msat), 0) AS used
+                    FROM sovran_transactions
+                    WHERE app_id = ? AND type = 'outgoing' AND state IN ('settled', 'pending')
+                      AND created_at >= ?
+                    """,
+                    (int(app_id), int(since)),
+                ).fetchone()
+            else:
+                row = self._conn.execute(
+                    """
+                    SELECT COALESCE(SUM(amount_msat + fees_paid_msat + fee_reserve_msat), 0) AS used
+                    FROM sovran_transactions
+                    WHERE app_id = ? AND type = 'outgoing' AND state IN ('settled', 'pending')
+                    """,
+                    (int(app_id),),
+                ).fetchone()
+            return int(row["used"])
+
     def _check_budget_locked(
         self, cur: sqlite3.Cursor, app_row: sqlite3.Row, needed_msat: int
     ) -> None:
@@ -910,14 +985,28 @@ class NwcStore:
         if max_sat <= 0:
             return
         max_msat = max_sat * 1000
-        spent_row = cur.execute(
-            """
-            SELECT COALESCE(SUM(amount_msat + fees_paid_msat + fee_reserve_msat), 0) AS used
-            FROM sovran_transactions
-            WHERE app_id = ? AND type = 'outgoing' AND state IN ('settled', 'pending')
-            """,
-            (int(app_row["id"]),),
-        ).fetchone()
+        since, _renews = _budget_period_window(
+            str(app_row["budget_renewal"] or "never"), int(time.time())
+        )
+        if since is not None:
+            spent_row = cur.execute(
+                """
+                SELECT COALESCE(SUM(amount_msat + fees_paid_msat + fee_reserve_msat), 0) AS used
+                FROM sovran_transactions
+                WHERE app_id = ? AND type = 'outgoing' AND state IN ('settled', 'pending')
+                  AND created_at >= ?
+                """,
+                (int(app_row["id"]), since),
+            ).fetchone()
+        else:
+            spent_row = cur.execute(
+                """
+                SELECT COALESCE(SUM(amount_msat + fees_paid_msat + fee_reserve_msat), 0) AS used
+                FROM sovran_transactions
+                WHERE app_id = ? AND type = 'outgoing' AND state IN ('settled', 'pending')
+                """,
+                (int(app_row["id"]),),
+            ).fetchone()
         used_msat = int(spent_row["used"])
         if used_msat + needed_msat > max_msat:
             raise NwcStoreError(
@@ -1044,9 +1133,52 @@ class NwcStore:
             "metadata": {},
         }
 
+    def find_txs_by_selector(
+        self,
+        app_id: int,
+        transaction_id: str | None = None,
+        payment_hash: str = "",
+        invoice: str = "",
+    ) -> list[dict[str, Any]]:
+        """All ledger rows of one wallet matching a NWC-09 lookup selector.
+
+        Selectors only ever match rows belonging to `app_id`: a lookup must
+        never reveal whether another wallet's record exists. Multiple rows
+        can legitimately share a payment hash (an app paying its own
+        invoice creates an outgoing *and* an incoming row), so callers get
+        the full list and decide (NWC-09: `MULTIPLE_MATCHES`).
+        """
+        with self._lock:
+            if transaction_id is not None:
+                rows = self._conn.execute(
+                    "SELECT * FROM sovran_transactions WHERE app_id = ? AND id = ?",
+                    (int(app_id), int(transaction_id)),
+                ).fetchall()
+            elif payment_hash:
+                rows = self._conn.execute(
+                    """
+                    SELECT * FROM sovran_transactions
+                    WHERE app_id = ? AND payment_hash = ? ORDER BY id ASC
+                    """,
+                    (int(app_id), payment_hash.strip().lower()),
+                ).fetchall()
+            elif invoice:
+                rows = self._conn.execute(
+                    """
+                    SELECT * FROM sovran_transactions
+                    WHERE app_id = ? AND invoice = ? ORDER BY id ASC
+                    """,
+                    (int(app_id), invoice.strip()),
+                ).fetchall()
+            else:
+                return []
+            return [self._row_to_tx_dict(r) for r in rows]
+
     @staticmethod
     def to_nip47_tx(tx: dict[str, Any]) -> dict[str, Any]:
         return {
+            # NWC-09: stable wallet-scoped id, identical across methods.
+            "transaction_id": str(tx["id"]) if tx.get("id") is not None else None,
             "type": tx["type"],
             "state": tx["state"],
             "invoice": tx["invoice"],
@@ -1061,6 +1193,43 @@ class NwcStore:
             "settled_at": tx["settled_at"],
             "metadata": {},
         }
+
+    @staticmethod
+    def to_nip47_payment_record(tx: dict[str, Any]) -> dict[str, Any]:
+        """NWC-09 common payment-record envelope for a ledger row (bolt11)."""
+        payment_hash = str(tx.get("paymentHash") or tx.get("payment_hash") or "").lower()
+        details: dict[str, Any] = {"payment_hash": payment_hash}
+        if tx.get("invoice"):
+            details["invoice"] = tx["invoice"]
+        preimage = str(tx.get("preimage") or "").lower()
+        # NWC-09: never disclose a preimage that does not hash to the
+        # payment hash (defends against stale/fabricated ledger values).
+        if preimage and payment_hash:
+            try:
+                if hashlib.sha256(bytes.fromhex(preimage)).hexdigest() == payment_hash:
+                    details["preimage"] = preimage
+            except ValueError:
+                pass
+        if tx.get("description"):
+            details["description"] = tx["description"]
+        if tx.get("description_hash"):
+            details["description_hash"] = tx["description_hash"]
+        record: dict[str, Any] = {
+            "transaction_id": str(tx["id"]) if tx.get("id") is not None else None,
+            "type": tx["type"],
+            "state": tx["state"],
+            "payment_type": "bolt11",
+            "amount": int(tx["amountMsat"]),
+            "fees_paid": int(tx["feesPaid"]),
+            "created_at": int(tx["created_at"]),
+            "metadata": {},
+            "details": details,
+        }
+        if tx.get("expires_at"):
+            record["expires_at"] = int(tx["expires_at"])
+        if tx.get("settled_at"):
+            record["settled_at"] = int(tx["settled_at"])
+        return record
 
 
 # ── Main Sovran NWC Engine (NIP-47 + REST API + Relay Worker) ─────
@@ -1751,6 +1920,29 @@ class SovranNwcDaemon:
                     },
                 }
 
+            if method == "get_budget":
+                # NWC-13: empty result means "no budget configured" — clients
+                # must be able to tell that apart from a zero budget.
+                fresh_app = self.store.get_app(app_id) or app
+                total_sat = int(fresh_app.get("maxAmountSat") or 0)
+                if total_sat <= 0:
+                    return {"result_type": "get_budget", "result": {}}
+                period = str(fresh_app.get("budgetRenewal") or "never").lower()
+                if period not in BUDGET_PERIODS:
+                    period = "never"
+                since, renews_at = _budget_period_window(period, int(time.time()))
+                result: dict[str, Any] = {
+                    "used_budget": self.store.budget_used_msat(app_id, since=since),
+                    "total_budget": total_sat * 1000,
+                    "renewal_period": period,
+                }
+                if renews_at is not None:
+                    result["renews_at"] = renews_at
+                return {"result_type": "get_budget", "result": result}
+
+            if method == "lookup_payment":
+                return self._lookup_payment_payload(app, params)
+
             if method == "pay_invoice":
                 return self._pay_invoice_payload(app, params)
 
@@ -1774,6 +1966,93 @@ class SovranNwcDaemon:
         }
 
     # ── Payment handlers ───────────────────────────────────────────
+
+    def _lookup_payment_payload(
+        self, app: dict[str, Any], params: dict[str, Any]
+    ) -> dict[str, Any]:
+        """NWC-09 `lookup_payment`: reconcile one payment record by selector.
+
+        Supported selectors: `transaction_id`, and the BOLT11-compatible
+        top-level `payment_hash` / `invoice` (also inside a `lookup` object
+        when `payment_type` is `bolt11`). Other payment types are refused
+        with UNSUPPORTED_PAYMENT_TYPE rather than guessed at.
+        """
+
+        def err(code: str, message: str) -> dict[str, Any]:
+            return {
+                "result_type": "lookup_payment",
+                "error": {"code": code, "message": message},
+            }
+
+        app_id = int(app["id"])
+        payment_type = str(params.get("payment_type") or "").strip().lower()
+        if payment_type and payment_type != "bolt11":
+            return err(
+                "UNSUPPORTED_PAYMENT_TYPE",
+                f"Payment type '{payment_type}' is not supported",
+            )
+
+        transaction_id = params.get("transaction_id")
+        payment_hash = str(params.get("payment_hash") or "").strip().lower()
+        invoice = str(params.get("invoice") or "").strip()
+        lookup = params.get("lookup")
+        if isinstance(lookup, dict):
+            payment_hash = payment_hash or str(
+                lookup.get("payment_hash") or ""
+            ).strip().lower()
+            invoice = invoice or str(lookup.get("invoice") or "").strip()
+            if transaction_id is None:
+                transaction_id = lookup.get("transaction_id")
+
+        if transaction_id is None and not payment_hash and not invoice:
+            return err(
+                "BAD_REQUEST",
+                "One of transaction_id, payment_hash, or invoice is required",
+            )
+
+        self.reconcile_pending_invoices(app_id=app_id)
+
+        if transaction_id is not None:
+            tx_id_int = _as_int(transaction_id, None)
+            if tx_id_int is None:
+                return err("BAD_REQUEST", "transaction_id is invalid")
+            matches = self.store.find_txs_by_selector(
+                app_id, transaction_id=str(tx_id_int)
+            )
+        elif payment_hash and invoice:
+            by_hash = self.store.find_txs_by_selector(
+                app_id, payment_hash=payment_hash
+            )
+            by_invoice = self.store.find_txs_by_selector(app_id, invoice=invoice)
+            if not by_hash and not by_invoice:
+                return err("NOT_FOUND", "Payment not found")
+            ids_hash = {int(t["id"]) for t in by_hash}
+            ids_invoice = {int(t["id"]) for t in by_invoice}
+            # Both selectors were given, so both must agree on the record(s);
+            # any disagreement is a client error, not a guessable lookup.
+            if ids_hash != ids_invoice:
+                return err(
+                    "BAD_REQUEST", "payment_hash and invoice identify different payments"
+                )
+            matches = by_hash
+        elif payment_hash:
+            matches = self.store.find_txs_by_selector(
+                app_id, payment_hash=payment_hash
+            )
+        else:
+            matches = self.store.find_txs_by_selector(app_id, invoice=invoice)
+
+        if not matches:
+            return err("NOT_FOUND", "Payment not found")
+        if len(matches) > 1:
+            return err(
+                "MULTIPLE_MATCHES",
+                "Selector matches multiple payments; retry with transaction_id",
+            )
+        return {
+            "result_type": "lookup_payment",
+            "result": self.store.to_nip47_payment_record(matches[0]),
+        }
 
     def _pay_invoice_payload(
         self, app: dict[str, Any], params: dict[str, Any]
@@ -2071,6 +2350,39 @@ class SovranNwcDaemon:
                 except Exception:
                     pass
 
+    def _nip42_authenticate(
+        self, conn: _nostr_mod.WebSocketConnection, relay_url: str, challenge: Any
+    ) -> bool:
+        """Answer a NIP-42 `AUTH` challenge with a kind-22242 event.
+
+        The connection authenticates as the first (oldest) wallet: a relay
+        connection carries one AUTH identity, so relays that restrict reads
+        to the authenticated pubkey will only serve that wallet on this
+        connection. Public relays (the default) merely require *an*
+        authenticated key. Returns True when an AUTH event was sent.
+        """
+        if not isinstance(challenge, str) or not challenge or len(challenge) > 1024:
+            return False
+        apps = self.store.get_all_active_apps_internal()
+        if not apps:
+            return False
+        app = apps[0]
+        try:
+            auth_event = _nostr_mod.make_event(
+                app["wallet_privkey"],
+                kind=22242,
+                content="",
+                tags=[["relay", relay_url], ["challenge", challenge]],
+            )
+            conn.send_json(["AUTH", auth_event])
+        except Exception as exc:
+            logger.debug("NIP-42 auth to %s failed: %s", relay_url, exc)
+            return False
+        logger.debug(
+            "NIP-42 authenticated to %s as wallet %s", relay_url, app["walletPubkey"]
+        )
+        return True
+
     def _relay_loop(self, relay_url: str) -> None:
         backoff = 2.0
         while not self._stop_event.is_set():
@@ -2092,9 +2404,28 @@ class SovranNwcDaemon:
                         frame = json.loads(msg)
                     except Exception:
                         continue
+                    if not isinstance(frame, list) or not frame:
+                        continue
+                    if frame[0] == "AUTH" and len(frame) >= 2:
+                        # NIP-42: prove wallet-key ownership, then re-issue
+                        # the subscription (the original REQ was sent before
+                        # authentication and may have been refused).
+                        if self._nip42_authenticate(conn, relay_url, frame[1]):
+                            self._sync_relay_subscriptions(conn)
+                        continue
+                    if frame[0] == "CLOSED":
+                        # e.g. "auth-required: ..." — the relay will follow
+                        # with an AUTH challenge, handled above. Log so an
+                        # operator can see why a relay serves no requests.
+                        logger.info(
+                            "Relay %s closed subscription %s: %s",
+                            relay_url,
+                            frame[1] if len(frame) > 1 else "",
+                            frame[2] if len(frame) > 2 else "",
+                        )
+                        continue
                     if (
-                        isinstance(frame, list)
-                        and len(frame) >= 3
+                        len(frame) >= 3
                         and frame[0] == "EVENT"
                         and isinstance(frame[2], dict)
                     ):
@@ -2196,7 +2527,7 @@ class SovranNwcDaemon:
                     "running": True,
                     "unlocked": True,
                     "backendType": "LND",
-                    "version": "sovran-nwc-2.1.0",
+                    "version": "sovran-nwc-2.2.0",
                 }
 
             if route == "/api/setup" and method == "POST":

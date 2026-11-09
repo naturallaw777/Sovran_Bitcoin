@@ -17,7 +17,7 @@
 
 stdenvNoCC.mkDerivation {
   pname = "sovran-nwc";
-  version = "2.1.0";
+  version = "2.2.0";
 
   src = ./.;
 
@@ -38,6 +38,8 @@ stdenvNoCC.mkDerivation {
     python3 tests/test_request_hardening.py
     python3 tests/test_scoped_credentials.py
     python3 tests/test_invoice_lifecycle.py
+    python3 tests/test_budget_and_lookup.py
+    python3 tests/test_nip42_auth.py
     runHook postCheck
   '';
 

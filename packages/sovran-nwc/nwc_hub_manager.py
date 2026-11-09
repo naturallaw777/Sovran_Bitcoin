@@ -58,6 +58,12 @@ RECEIVE_ONLY_SCOPES = [
     "lookup_invoice",
     "list_transactions",
     "notifications",
+    # NWC-13 budget visibility has its own scope (independent of get_balance);
+    # Sovran-issued connections get it by default. Wallets created before
+    # this scope existed keep answering RESTRICTED to get_budget until they
+    # are re-created (`rotate` preserves scopes), while lookup_payment works
+    # at once — it is granted through the pay/list scopes they already hold.
+    "get_budget",
 ]
 
 LIMITED_SEND_SCOPES = RECEIVE_ONLY_SCOPES + ["pay_invoice"]

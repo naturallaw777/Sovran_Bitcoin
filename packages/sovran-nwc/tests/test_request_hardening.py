@@ -249,7 +249,7 @@ class RequestHardeningTest(unittest.TestCase):
         info = self.daemon.build_nip47_info_event(self.app)
         tags = {t[0]: t[1] for t in info["tags"]}
         self.assertEqual(tags["encryption"], "nip44_v2 nip04")
-        self.assertEqual(tags["extensions"], "02 04 05")
+        self.assertEqual(tags["extensions"], "02 04 05 09")
         self.assertIn("pay_keysend", info["content"])
 
     def test_events_for_unknown_wallets_skip_signature_verification(self) -> None:
