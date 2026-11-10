@@ -21,6 +21,12 @@
     # and available as `overlays.default` for manual use.
     overlay = final: prev: {
       sovran-bitcoin = prev.callPackage ./packages { };
+
+      # TEMPORARY: remove once NixOS/nixpkgs#585046 reaches nixos-unstable.
+      electrs = prev.electrs.overrideAttrs (old: {
+        nativeBuildInputs = (old.nativeBuildInputs or [ ]) ++ [ final.pkg-config ];
+        buildInputs = (old.buildInputs or [ ]) ++ [ final.zstd ];
+      });
     };
 
     # Full-stack regtest configuration used by the evaluation check below.
