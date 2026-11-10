@@ -56,7 +56,7 @@ The gRPC onion forwards to LND's loopback listener (default `127.0.0.1:10009`); 
 
 Use **direct LND access** for full node/channel management, **NWC** for a separate wallet-only connection with optional spending limits, or both.
 
-### Direct LND: Zeus and BitBanana
+### Direct LND from mobile: Zeus and BitBanana
 
 | App | Command | Connection |
 | --- | --- | --- |
