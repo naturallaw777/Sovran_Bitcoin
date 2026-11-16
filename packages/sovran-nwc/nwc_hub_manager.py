@@ -106,6 +106,7 @@ class AlbyHubManager:
         lnd_address: str = DEFAULT_LND_ADDRESS,
         lnd_cert_file: str = DEFAULT_LND_CERT_FILE,
         permission: str = DEFAULT_HUB_PERMISSION,
+        unlock_password: str | None = None,
     ) -> None:
         self.api_base = api_base.rstrip("/")
         self.unlock_password_file = unlock_password_file
@@ -113,6 +114,16 @@ class AlbyHubManager:
         self.lnd_address = lnd_address
         self.lnd_cert_file = lnd_cert_file
         self.permission = permission
+        # In-memory credential alternative to `unlock_password_file`.
+        # When set (even to ""), it takes precedence and the password
+        # file is never read. This lets embedders that already hold the
+        # secret via a safer channel (environment, systemd credential,
+        # secret manager — and tests, which previously had to write a
+        # throwaway password to a temp file) avoid persisting the secret
+        # to disk in clear text at all. Production services keep using
+        # the file path, whose permissions are managed by the NixOS
+        # module (umask 077, service-private directories).
+        self._unlock_password = unlock_password
         self._lock = threading.Lock()
         self._token: str | None = None
 
@@ -221,6 +232,8 @@ class AlbyHubManager:
     # ── Startup / Auth ─────────────────────────────────────────────
 
     def _read_unlock_password(self) -> str:
+        if self._unlock_password is not None:
+            return self._unlock_password
         try:
             with open(self.unlock_password_file, "r") as fh:
                 return fh.read().strip()

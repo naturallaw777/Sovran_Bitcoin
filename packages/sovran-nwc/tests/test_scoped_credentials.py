@@ -226,12 +226,15 @@ class ScopedCredentialManagerIntegrationTest(unittest.TestCase):
         )
 
     def _manager(self, password: str, permission: str) -> mgr_mod.AlbyHubManager:
-        pw_file = os.path.join(self.tmpdir.name, f"pw-{permission}")
-        with open(pw_file, "w") as fh:
-            fh.write(password + "\n")
+        # Pass the (fake, test-only) scoped credential in memory via
+        # `unlock_password=` instead of writing it to a password file.
+        # The file-based path remains covered by test_nwc_daemon.py and
+        # test_followups.py; this test's subject is credential scoping,
+        # and no secret — even a dummy one — should be stored on disk in
+        # clear text (CodeQL py/clear-text-storage-sensitive-data).
         return mgr_mod.AlbyHubManager(
             api_base=self.api_base,
-            unlock_password_file=pw_file,
+            unlock_password=password,
             macaroon_file=self.mac_file,
             permission=permission,
         )
