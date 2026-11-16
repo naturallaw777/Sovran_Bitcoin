@@ -1307,20 +1307,28 @@ class SovranNwcDaemon:
         # unlock password is dropped: it would silently be a second full
         # credential, which is exactly the confusion this split exists to kill.
         self._scoped_passwords: dict[str, str] = {}
-        for perm, pw in (scoped_passwords or {}).items():
-            perm_norm = str(perm).strip().lower()
-            secret = str(pw or "").strip()
-            if perm_norm not in ("invoice", "read") or not secret:
+        # `scoped_passwords` maps scope -> *secret*, so CodeQL's
+        # py/clear-text-logging treats the whole mapping as sensitive — keys
+        # included. Re-key a normalized copy for lookup, then walk a fixed
+        # vocabulary below: the scope named in the warning is then a constant
+        # from this file, never a value tainted by the credential mapping.
+        allowed_scopes = ("invoice", "read")
+        supplied = {
+            str(k).strip().lower(): v for k, v in (scoped_passwords or {}).items()
+        }
+        for perm in allowed_scopes:
+            secret = str(supplied.get(perm) or "").strip()
+            if not secret:
                 continue
             if hmac.compare_digest(
                 secret.encode("utf-8"), (unlock_password or "").strip().encode("utf-8")
             ):
                 logger.warning(
                     "Ignoring scoped '%s' credential: identical to the unlock password",
-                    perm_norm,
+                    perm,
                 )
                 continue
-            self._scoped_passwords[perm_norm] = secret
+            self._scoped_passwords[perm] = secret
         self.relays = [
             r.strip()
             for r in (relays or ["wss://relay.getalby.com", "wss://relay2.getalby.com"])

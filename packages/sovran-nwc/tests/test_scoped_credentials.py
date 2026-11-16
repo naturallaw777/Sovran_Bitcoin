@@ -181,6 +181,45 @@ class ScopedCredentialTest(unittest.TestCase):
         token = daemon.issue_token(FULL_PW, "full")
         self.assertTrue(token)
 
+    def test_collision_warning_never_logs_secret_material(self) -> None:
+        """The collision warning must name only the scope, never a secret.
+
+        Regression test for CodeQL py/clear-text-logging-sensitive-data on the
+        warning emitted when a scoped credential equals the unlock password:
+        `scoped_passwords` is a scope -> password mapping, so nothing derived
+        from it — values *or* keys — may reach a log call.
+        """
+        unique_secret = "collide-with-unlock-" + os.urandom(8).hex()
+        with self.assertLogs(daemon_mod.logger, level="WARNING") as captured:
+            daemon = daemon_mod.SovranNwcDaemon(
+                store=self.store,
+                lnd=self.lnd,
+                unlock_password=unique_secret,
+                relays=[],
+                scoped_passwords={"invoice": unique_secret},
+            )
+        self.assertEqual(daemon._scoped_passwords, {})
+        messages = "\n".join(captured.output)
+        self.assertIn("invoice", messages)
+        self.assertNotIn(unique_secret, messages)
+        # Nor may any fragment of the secret survive.
+        for fragment in (unique_secret[:8], unique_secret[-8:]):
+            self.assertNotIn(fragment, messages)
+
+    def test_scoped_key_normalization_still_applies(self) -> None:
+        # Mixed case / padding in the scope name is still normalized.
+        daemon = daemon_mod.SovranNwcDaemon(
+            store=self.store,
+            lnd=self.lnd,
+            unlock_password=FULL_PW,
+            relays=[],
+            scoped_passwords={"  INVOICE  ": INVOICE_PW},
+        )
+        self.assertEqual(daemon._scoped_passwords, {"invoice": INVOICE_PW})
+        status, body = self._unlock(INVOICE_PW, "invoice")
+        self.assertEqual(status, 200)
+        self.assertEqual(body["permission"], "invoice")
+
 
 @unittest.skipUnless(_loopback_usable(), "loopback sockets unavailable")
 class ScopedCredentialManagerIntegrationTest(unittest.TestCase):
