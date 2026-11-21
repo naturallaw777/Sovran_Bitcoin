@@ -6,6 +6,23 @@ This project follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.2.1] - 2026-11-21
+
+### Changed
+
+- Refreshed the locked `nixpkgs` `nixos-unstable` revision from `f4a03c0`
+  (2026-11-07) to `2786a2a` (2026-11-21). Notable updates include LND
+  `0.21.6-beta` → `0.21.8-beta`, electrs `0.12.0` → `0.12.1`, Tor
+  `0.4.9.16` → `0.4.9.17`, nginx `1.30.6` → `1.30.7`, Node.js 22
+  `22.23.4` → `22.23.5`, and Node.js 26 `26.13.0` → `26.13.1`.
+- Added an electrs build-input override for compatibility with nixpkgs
+  revisions missing its zstd build dependencies.
+
+### Fixed
+
+- Kept credential-derived data out of the Sovran NWC scoped-credential warning.
+- Passed test credentials in memory instead of writing them to a clear-text file.
+
 ## [1.2.0] - 2026-11-09
 
 ### Changed
@@ -524,7 +541,8 @@ This project follows [Semantic Versioning](https://semver.org/).
 
 - Initial tagged release.
 
-[Unreleased]: https://github.com/naturallaw777/Sovran_Bitcoin/compare/1.2.0...HEAD
+[Unreleased]: https://github.com/naturallaw777/Sovran_Bitcoin/compare/1.2.1...HEAD
+[1.2.1]: https://github.com/naturallaw777/Sovran_Bitcoin/compare/1.2.0...1.2.1
 [1.2.0]: https://github.com/naturallaw777/Sovran_Bitcoin/compare/1.1.3...1.2.0
 [1.1.3]: https://github.com/naturallaw777/Sovran_Bitcoin/compare/1.1.2...1.1.3
 [1.1.2]: https://github.com/naturallaw777/Sovran_Bitcoin/compare/1.1.1...1.1.2
