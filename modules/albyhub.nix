@@ -258,7 +258,16 @@ in {
       "f ${auditLogPath} 0600 ${cfg.user} ${cfg.group} -"
     ];
 
-    environment.systemPackages = [ wrappedNwcWallet ];
+    # Auto-enable logrotate so the audit log never grows unbounded.
+    services.logrotate.enable = true;
+
+    # Install logrotate configuration for the audit log so it does not grow
+    # without bound.  The postrotate script truncates in-place (the daemon
+    # holds the fd open under ProtectSystem=strict) and recreates ownership.
+    environment.etc."logrotate.d/sovran-nwc-audit".source =
+      "${cfg.package}/share/sovran-nwc/sovran-nwc-audit.logrotate";
+
+    environment.systemPackages = [ wrappedNwcWallet cfg.package pkgs.logrotate ];
 
     services.lnd.macaroons.albyhub = {
       user = cfg.user;

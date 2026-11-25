@@ -1,0 +1,25 @@
+# Log rotation for the Sovran NWC audit log.
+# Installed to /etc/logrotate.d/sovran-nwc-audit by the NixOS module.
+#
+# The audit log records wallet creation, invoice creation, and every
+# outgoing payment as append-only JSON lines. Rotation preserves up to
+# 12 weekly files (≈12 weeks of history) before discarding oldest.
+
+/var/log/sovran-nwc-audit.log {
+    weekly
+    rotate 12
+    compress
+    delaycompress
+    missingok
+    notifempty
+    create 0600 albyhub albyhub
+    sharedscripts
+    postrotate
+        # The systemd units run as the albyhub user with ProtectSystem=strict.
+        # Truncate the active file in-place so the running daemon keeps its
+        # open file descriptor valid; then create a fresh empty file with
+        # correct ownership for the next write cycle.
+        : > /var/log/sovran-nwc-audit.log
+        chown albyhub:albyhub /var/log/sovran-nwc-audit.log
+    endscript
+}

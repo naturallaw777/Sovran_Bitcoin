@@ -83,6 +83,11 @@ stdenvNoCC.mkDerivation {
     chmod +x $out/bin/nwc-daemon $out/bin/nwc-lnurl $out/bin/nwc-wallet
     ln -s nwc-daemon $out/bin/albyhub
 
+    # Logrotate configuration for the audit log (installed to /etc/logrotate.d/
+    # by the NixOS module).
+    mkdir -p $out/share/sovran-nwc
+    install -Dm 644 sovran-nwc-audit.logrotate $out/share/sovran-nwc/sovran-nwc-audit.logrotate
+
     runHook postInstall
   '';
 

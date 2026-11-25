@@ -156,7 +156,6 @@ assert lib.assertMsg
     && lib.elem "testmempoolaccept" config.services.bitcoind.rpc.users.btcpayserver.rpcwhitelist
     && lib.elem "signrawtransactionwithkey" config.services.bitcoind.rpc.users.btcpayserver.rpcwhitelist
     && lib.elem "signrawtransactionwithwallet" config.services.bitcoind.rpc.users.btcpayserver.rpcwhitelist
-    && lib.elem "getblockfrompeer" config.services.bitcoind.rpc.users.btcpayserver.rpcwhitelist
     && lib.elem "generatetoaddress" config.services.bitcoind.rpc.users.btcpayserver.rpcwhitelist
     && lib.elem "createwallet" config.services.bitcoind.rpc.users.btcpayserver.rpcwhitelist
     && lib.hasInfix "prefix_extractor=rocksdb" electrsPreStart)

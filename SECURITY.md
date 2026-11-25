@@ -123,8 +123,9 @@ which token scopes?).
   instances — it is an abuse control, not a security boundary. Use proxy-side limits too.
 - **Alias discovery is an existence oracle by design:** `/.well-known/lnurlp/<alias>` answers
   200 vs 404. Public Lightning Addresses are inherently enumerable; prefer unguessable aliases.
-- **The `sovran-nwc` audit log** (`/var/log/sovran-nwc-audit.log`) is append-only with no
-  rotation configured in this repository — size it into your own log rotation.
+- **The `sovran-nwc` audit log** (`/var/log/sovran-nwc-audit.log`) is append-only and rotated weekly
+  by a logrotate configuration installed by the NixOS module (12-week retention, compressed).
+  Logrotate is auto-enabled when `services.albyhub.enable = true`.
 - **The two clearnet vhosts are the whole attack surface for remote attackers.** Nothing in
   this flake rate-limits or authenticates at the edge for you: BTCPay relies on its own login,
   LNURL on its invoice-scoped token. Put both behind a proxy that does TLS, limits, and

@@ -13,7 +13,6 @@
   "getblockchaininfo"
   "getblockcount"
   "getblockfilter"
-  "getblockfrompeer"
   "getblockhash"
   "getblockheader"
   "getblockstats"
@@ -29,8 +28,6 @@
   "gettxout"
   "gettxoutproof"
   "gettxoutsetinfo"
-  "scantxoutset"
-  "verifytxoutproof"
   # Mining
   "getblocktemplate"
   "getmininginfo"
